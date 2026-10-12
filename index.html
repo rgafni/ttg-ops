@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#ffffff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="TTG Ops">
+<title>TTG Ops</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="install.css">
+<script src="boot.js"></script>
+<script src="config.js"></script>
+<script src="install.js" data-name="TTG Ops" data-ns="ttgops" data-token-key="ttgops.k"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="icons/icon-192.png" alt=""><div><b>TTG Ops</b><small>Together They Grow · Clinical</small></div></div>
+  <div class="topr"><button id="installBtn" class="btn sm ghost" hidden>⤓ Install</button><button id="refreshBtn" class="icon" aria-label="Refresh">↻</button></div>
+</header>
+<nav class="tabs" id="tabs">
+  <a href="#/" data-r="home"><i>◉</i><span>Today</span></a>
+  <a href="#/cases" data-r="cases"><i>▤</i><span>Cases</span></a>
+  <a href="#/queue" data-r="queue"><i>✉</i><span>Queue</span><em id="qBadge" hidden></em></a>
+  <a href="#/triggers" data-r="triggers"><i>⚡</i><span>Triggers</span></a>
+  <a href="#/settings" data-r="settings"><i>⚙</i><span>Cadence</span></a>
+</nav>
+<main id="view" aria-live="polite"></main>
+<button id="katyaFab" class="fab" aria-label="Ask Katya">💬 <span>Ask Katya</span></button>
+<div id="sheet" class="sheet" hidden><div class="sheet-bg" data-close></div><div class="sheet-card" role="dialog" aria-modal="true"></div></div>
+<div id="toast" class="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
