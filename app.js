@@ -38,7 +38,7 @@
   function val(v) { return v && !/^\[(no source|blank|none listed)\]$/i.test(v) && !/^from schedule:/i.test('x') ? esc(v) : '<span class="miss">no data yet</span>'; }
   function ini(n) { return esc(String(n).split(/\s+/).map(function (x) { return x[0]; }).join('').slice(0, 2).toUpperCase()); }
   function fmtTs(t) { if (!t) return ''; var d = new Date(t.length <= 10 ? t + 'T12:00' : t); if (isNaN(d)) return esc(t); return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: t.length > 10 ? 'numeric' : undefined, minute: t.length > 10 ? '2-digit' : undefined }) + (t.length > 10 ? ' ET' : ''); }
-  function drafts() { return (S.data.queue || []).filter(function (q) { return q.status === 'draft'; }); }
+  function drafts() { return (S.data.queue || []).filter(function (q) { return q.status === 'draft' && ownerOf(q) !== 'Nina'; }); }
   /* ---------- router ---------- */
   function route() {
     var h = location.hash.replace(/^#\/?/, '').split('/');
@@ -116,12 +116,35 @@
     return h;
   }
   /* ---------- Approval queue ---------- */
+  var SECS = [['reply', 'Needs your reply', '💬'], ['struct', 'Structural gaps', '🧩'], ['routine', 'Routine updates', '📨'], ['over', 'Oversight', '🔍'], ['bill', 'Billing', '💵'], ['nina', 'Nina · Recruiting', '👥']];
+  var TSEC = { T1: 'routine', T2: 'routine', T5: 'routine', T3: 'over', T4: 'over', T8: 'over', T6: 'reply', T14: 'reply', T13: 'struct', T7: 'bill', T9: 'bill', T10: 'bill', T11: 'bill', T12: 'nina' };
+  function ownerOf(q) { return q.owner || (q.trigger === 'T12' || /unstaffed|recruit/i.test((q.message || '') + ' ' + (q.note || '')) ? 'Nina' : 'Roni'); }
+  function secOf(q) { return ownerOf(q) === 'Nina' ? 'nina' : (TSEC[q.trigger] || 'reply'); }
+  function inTab(q, t) { return t === 'all' || (t === 'approved' ? /^approved/.test(q.status) : q.status === t); }
   function queue() {
     var Q = S.data.queue || [], tabs = [['draft', 'To review'], ['approved', 'Approved'], ['dismissed', 'Dismissed'], ['all', 'All']];
-    var list = Q.filter(function (q) { return S.qtab === 'all' || (S.qtab === 'approved' ? /^approved/.test(q.status) : q.status === S.qtab); });
-    var h = '<h1>Approval queue</h1><p class="sub">Drafts from triggers. Approving only marks an item \u201capproved – Katya to send\u201d. TTG Ops never sends anything itself.</p>';
-    h += '<div class="chips">' + tabs.map(function (t) { var n = Q.filter(function (q) { return t[0] === 'all' || (t[0] === 'approved' ? /^approved/.test(q.status) : q.status === t[0]); }).length; return '<button class="chip' + (S.qtab === t[0] ? ' on' : '') + '" data-qtab="' + t[0] + '">' + t[1] + ' (' + n + ')</button>'; }).join('') + '</div>';
-    h += '<div class="btns" style="margin:0 0 12px"><button class="btn sm ghost" data-act="run">⚡ Re-check triggers now</button></div>';
+    var sec = S.qsec, h;
+    if (!sec) {
+      var mine = drafts().length;
+      h = '<h1>Approval queue</h1><p class="sub">' + mine + ' for you to review. Nothing is ever sent by the app.</p><div class="tiles">';
+      h += SECS.map(function (x) { var n = Q.filter(function (q) { return q.status === 'draft' && secOf(q) === x[0]; }).length;
+        return '<button class="tile' + (x[0] === 'nina' ? ' nina' : '') + (n ? '' : ' zero') + '" data-qsec="' + x[0] + '"><span class="ti">' + x[2] + '</span><span class="tn">' + n + '</span><span class="tl">' + x[1] + '</span></button>'; }).join('');
+      return h + '</div><div class="btns" style="margin:4px 0 12px"><button class="btn sm ghost" data-act="run">⚡ Re-check triggers now</button></div>';
+    }
+    var S0 = SECS.filter(function (x) { return x[0] === sec; })[0], inSec = Q.filter(function (q) { return secOf(q) === sec; });
+    h = '<button class="back" data-qsec="">‹ All sections</button><h1>' + S0[2] + ' ' + S0[1] + '</h1>';
+    if (sec === 'nina') {
+      var open = inSec.filter(function (q) { return q.status === 'draft'; }), g = {};
+      open.forEach(function (q) { (g[q.trigger] = g[q.trigger] || []).push(q); });
+      h += '<p class="sub">Nina\u2019s items. View only.</p>';
+      h += Object.keys(g).length ? Object.keys(g).map(function (t) { var L = g[t];
+        var title = t === 'T12' ? 'students unstaffed 7+ days' : 'recruiting items';
+        return '<details class="card grp"><summary><span class="gn">' + L.length + '</span><span class="grow"><b>' + title + '</b><small>Recruiting · tap to see list</small></span><span class="pill p-brand">' + esc(t) + '</span></summary>' +
+          L.map(function (q) { var m = /:\s*(.+?) unstaffed/.exec(q.message || ''); return '<a class="row" href="#/case/' + esc(q.case_id) + '"><div class="grow"><b>' + esc(q.student || q.case_id) + '</b><small>' + esc(m ? m[1] : 'provider') + '</small></div></a>'; }).join('') + '</details>'; }).join('') : '<div class="card empty">Nothing open for Nina.</div>';
+      return h;
+    }
+    var list = inSec.filter(function (q) { return inTab(q, S.qtab); });
+    h += '<div class="chips">' + tabs.map(function (t) { var n = inSec.filter(function (q) { return inTab(q, t[0]); }).length; return '<button class="chip' + (S.qtab === t[0] ? ' on' : '') + '" data-qtab="' + t[0] + '">' + t[1] + ' (' + n + ')</button>'; }).join('') + '</div>';
     h += list.length ? list.map(function (q) {
       var st = q.status === 'draft' ? pill('yellow', 'draft') : /^approved/.test(q.status) ? pill('green', q.status) : pill('unknown', q.status);
       return '<div class="card qitem" data-q="' + esc(q.id) + '"><div class="meta"><span class="pill p-brand">' + esc(q.trigger) + '</span>' + st + (q.student ? '<a class="small" href="#/case/' + esc(q.case_id) + '">' + esc(q.student) + '</a>' : '') + '</div>' +
@@ -202,7 +225,7 @@
   }
   function runTriggers() {
     toast('Checking triggers…');
-    api('runTriggers').then(function (r) { S.data.queue = r.queue; S.data.triggers = r.triggers; toast(r.added ? r.added + ' new draft' + (r.added > 1 ? 's' : '') + ' in queue' : 'No new drafts'); S.qtab = 'draft'; location.hash = '#/queue'; render(); }).catch(function (e) { toast(e.message); });
+    api('runTriggers').then(function (r) { S.data.queue = r.queue; S.data.triggers = r.triggers; toast(r.added ? r.added + ' new draft' + (r.added > 1 ? 's' : '') + ' in queue' : 'No new drafts'); S.qtab = 'draft'; S.qsec = null; location.hash = '#/queue'; render(); }).catch(function (e) { toast(e.message); });
   }
   /* ---------- binding ---------- */
   function bind() {
@@ -215,6 +238,7 @@
     var fp = $('#fp'); if (fp) fp.onchange = function () { S.filt.prov = fp.value; render(); };
     v.querySelectorAll('[data-edit]').forEach(function (e) { e.onclick = function () { editField(e.dataset.edit); }; });
     v.querySelectorAll('[data-qa]').forEach(function (b) { b.onclick = function () { quick(b.dataset.qa); }; });
+    v.querySelectorAll('[data-qsec]').forEach(function (b) { b.onclick = function () { S.qsec = b.dataset.qsec || null; S.qtab = 'draft'; render(); window.scrollTo(0, 0); }; });
     v.querySelectorAll('[data-qtab]').forEach(function (b) { b.onclick = function () { S.qtab = b.dataset.qtab; render(); }; });
     v.querySelectorAll('[data-qop]').forEach(function (b) {
       b.onclick = function () {

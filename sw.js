@@ -1,5 +1,5 @@
 /* App shell cache only. API responses (student data) are NEVER cached by the service worker. */
-var V = 'ttgops-v2', SHELL = ['./', 'index.html', 'app.css', 'app.js', 'boot.js', 'config.js', 'install.js', 'install.css', 'manifest.webmanifest', 'icons/icon-192.png'];
+var V = 'ttgops-v3', SHELL = ['./', 'index.html', 'app.css', 'app.js', 'boot.js', 'config.js', 'install.js', 'install.css', 'manifest.webmanifest', 'icons/icon-192.png'];
 self.addEventListener('install', function (e) { e.waitUntil(caches.open(V).then(function (c) { return c.addAll(SHELL); })); self.skipWaiting(); });
 self.addEventListener('activate', function (e) { e.waitUntil(caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k !== V; }).map(function (k) { return caches.delete(k); })); })); self.clients.claim(); });
 self.addEventListener('fetch', function (e) {
