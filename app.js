@@ -110,7 +110,7 @@
     h += '<h2>Clinical due dates</h2><div class="card"><dl class="kv">' + ef(c, 'Assessment/report due') + ef(c, 'Progress report due') + ef(c, 'Tx plan review') + ef(c, 'Related services (Nina)', 'Related services') + '</dl></div>';
     h += '<h2>Billing</h2><div class="card"><dl class="kv">' + ef(c, 'Notes submitted') + ef(c, 'Invoice submitted') + ef(c, 'Billing gap', 'Billing gap (sessions)') + '</dl></div>';
     h += '<h2>Notes timeline</h2><div class="card"><dl class="kv" style="margin-bottom:10px">' + ef(c, 'Roster notes (live issues)', 'Live issues') + ef(c, 'Why', 'Why (board)') + '</dl><textarea id="noteIn" placeholder="Add a note (call summary, decision…)"></textarea><div class="btns"><button class="btn sm" data-act="note">Add note</button></div>' +
-      '<div class="tl" style="margin-top:14px">' + (c.notes.length ? c.notes.map(function (n) { return '<div><small>' + fmtTs(n.ts) + ' · ' + esc(n.author) + ' · ' + esc(n.type) + '</small>' + esc(n.text) + '</div>'; }).join('') : '<div class="small">No notes yet.</div>') + '</div></div>';
+      '<div class="qtl" style="margin-top:14px">' + (c.notes.length ? c.notes.map(function (n) { return '<div><small>' + fmtTs(n.ts) + ' · ' + esc(n.author) + ' · ' + esc(n.type) + '</small>' + esc(n.text) + '</div>'; }).join('') : '<div class="small">No notes yet.</div>') + '</div></div>';
     var qs = (S.data.queue || []).filter(function (q) { return q.case_id === c.id; });
     h += '<h2>Outreach for this case</h2><div class="card">' + (qs.length ? qs.map(function (q) { return '<a class="row" href="#/queue"><span class="rank">' + esc(q.trigger) + '</span><div class="grow"><b>' + esc(q.recipient) + '</b><small>' + esc(q.status) + ' · ' + fmtTs(q.updated) + '</small></div></a>'; }).join('') : '<div class="small">No outreach drafts.</div>') + '</div></div></div>';
     return h;
@@ -128,7 +128,7 @@
       var mine = drafts().length;
       h = '<h1>Approval queue</h1><p class="sub">' + mine + ' for you to review. Nothing is ever sent by the app.</p><div class="tiles">';
       h += SECS.map(function (x) { var n = Q.filter(function (q) { return q.status === 'draft' && secOf(q) === x[0]; }).length;
-        return '<button class="tile' + (x[0] === 'nina' ? ' nina' : '') + (n ? '' : ' zero') + '" data-qsec="' + x[0] + '"><span class="ti">' + x[2] + '</span><span class="tn">' + n + '</span><span class="tl">' + x[1] + '</span></button>'; }).join('');
+        return '<button class="tile' + (x[0] === 'nina' ? ' nina' : '') + (n ? '' : ' zero') + '" data-qsec="' + x[0] + '"><span class="ti">' + x[2] + '</span><span class="qtn">' + n + '</span><span class="qtl">' + x[1] + '</span></button>'; }).join('');
       return h + '</div><div class="btns" style="margin:4px 0 12px"><button class="btn sm ghost" data-act="run">⚡ Re-check triggers now</button></div>';
     }
     var S0 = SECS.filter(function (x) { return x[0] === sec; })[0], inSec = Q.filter(function (q) { return secOf(q) === sec; });
