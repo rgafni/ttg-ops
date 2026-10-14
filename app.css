@@ -75,3 +75,4 @@ textarea{min-height:90px;resize:vertical}
 .back{border:0;background:none;color:var(--brand);font:inherit;font-weight:600;padding:4px 0 8px;cursor:pointer}
 .grp summary{display:flex;align-items:center;gap:12px;list-style:none;cursor:pointer}.grp summary::-webkit-details-marker{display:none}
 .grp .gn{font-size:30px;font-weight:800;color:#5b3fa6;min-width:44px;text-align:center}.grp .grow small{display:block;color:var(--mute)}.grp[open] summary{margin-bottom:8px}
+.banner.sync{background:#eef4ff;border-color:#c9daf8;color:#1d3b6b}.row.uns{align-items:center;gap:8px}

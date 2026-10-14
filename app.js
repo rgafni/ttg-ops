@@ -56,6 +56,11 @@
   function home() {
     var D = S.data, sm = D.summary, n = D.cases.length;
     var h = '<h1>Good ' + (new Date().getHours() < 12 ? 'morning' : 'afternoon') + ', Roni</h1><p class="sub">' + n + ' cases · ' + drafts().length + ' drafts waiting for you · ' + esc(new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })) + '</p>';
+    var sy = D.sync;
+    if (sy && sy.stale) h += '<div class="banner sync"><b>Roster check.</b> Cases come from TTG_Case_Roster' + (sy.roster_ok ? '' : ' \u2014 <b>roster could not be read, showing Case Board instead</b>') +
+      (sy.roster_updated ? ' (last updated ' + esc(sy.roster_updated) + (sy.roster_age_days != null ? ', ' + daysTxt(sy.roster_age_days) + ' ago' : '') + ')' : '') + '.' +
+      (sy.board_only && sy.board_only.length ? '<br>' + sy.board_only.length + ' on the Case Board but not the roster: ' + esc(sy.board_only.join(', ')) + '.' : '') +
+      (sy.roster_only && sy.roster_only.length ? '<br>' + sy.roster_only.length + ' on the roster but not the Case Board: ' + esc(sy.roster_only.join(', ')) + '.' : '') + '</div>';
     h += '<div class="grid4">' + SIDES.map(function (s) {
       var c = sm.health[s], t = n || 1;
       return '<a class="card side" href="#/cases" data-side="' + s + '" style="text-decoration:none;color:inherit"><h3>' + s + '</h3><div class="bar">' + ['red', 'yellow', 'green', 'unknown'].map(function (k) { return '<span class="' + k + '" style="width:' + (100 * c[k] / t) + '%"></span>'; }).join('') + '</div><div class="cnts"><span><i class="dot red"></i>' + c.red + '</span><span><i class="dot yellow"></i>' + c.yellow + '</span><span><i class="dot green"></i>' + c.green + '</span><span><i class="dot unknown"></i>' + c.unknown + ' ?</span></div></a>';
@@ -99,6 +104,8 @@
     var h = '<a href="#/cases" class="small" style="color:var(--brand);text-decoration:none">‹ Case board</a><h1>' + esc(c.student) + '</h1><p class="sub">' + esc(c.setting || 'Setting not on file') + ' · ID ' + esc(c.id) + '</p>';
     h += '<div class="chips" style="flex-wrap:wrap">' + SIDES.map(function (s) { return '<button class="pill p-' + c.health[s] + '" data-edit="Health: ' + s[0].toUpperCase() + s.slice(1) + '" style="border:0;cursor:pointer">' + s + ': ' + (c.health[s] === 'unknown' ? '?' : c.health[s]) + '</button>'; }).join('') + '</div>';
     if (c.why) h += '<div class="banner"><b>Why:</b> ' + esc(c.why) + '</div>';
+    if (c.gaps && c.gaps.length) h += '<div class="banner"><b>Unstaffed:</b> ' + c.gaps.map(function (g) { return esc(g.role) + ' for ' + daysTxt(g.days) + (g.departed ? ' (' + esc(g.departed) + ' left)' : ''); }).join('; ') + ' \u2014 on Nina\u2019s list.</div>';
+    if (c.source === 'board') h += '<div class="banner"><b>Not on TTG_Case_Roster.</b> This case only exists on the Case Board.</div>';
     h += '<h2>Quick actions</h2><div class="qa"><button data-qa="Draft check-in to parent">✉️ Draft check-in to parent</button><button data-qa="Ask BCBA for update">🩺 Ask BCBA for update</button><button data-qa="Summarize this case">📝 Summarize this case</button><button data-qa="Prep Josh update">📊 Prep Josh update</button></div>';
     h += '<div class="twocol"><div><h2>Team</h2><div class="card team">' + (c.team.length ? c.team.map(function (t) {
       return '<div class="row"><span class="av">' + ini(t.name) + '</span><div class="grow"><b>' + esc(t.name) + '</b><small>' + esc(t.role) + (t.email ? ' · ' + esc(t.email) : '') + (t.phone ? ' · ' + esc(t.phone) : '') + '</small></div></div>';
@@ -116,10 +123,14 @@
     return h;
   }
   /* ---------- Approval queue ---------- */
-  var SECS = [['reply', 'Needs your reply', '💬'], ['struct', 'Structural gaps', '🧩'], ['routine', 'Routine updates', '📨'], ['over', 'Oversight', '🔍'], ['bill', 'Billing', '💵'], ['nina', 'Nina · Recruiting', '👥']];
+  var SECS = [['reply', 'Needs your reply', '💬'], ['struct', 'Structural gaps', '🧩'], ['routine', 'Routine updates', '📨'], ['over', 'Oversight', '🔍'], ['bill', 'Billing', '💵'], ['unsorted', 'Unsorted', '🗂️'], ['nina', 'Nina · Recruiting', '👥']];
   var TSEC = { T1: 'routine', T2: 'routine', T5: 'routine', T3: 'over', T4: 'over', T8: 'over', T6: 'reply', T14: 'reply', T13: 'struct', T7: 'bill', T9: 'bill', T10: 'bill', T11: 'bill', T12: 'nina' };
-  function ownerOf(q) { return q.owner || (q.trigger === 'T12' || /unstaffed|recruit/i.test((q.message || '') + ' ' + (q.note || '')) ? 'Nina' : 'Roni'); }
-  function secOf(q) { return ownerOf(q) === 'Nina' ? 'nina' : (TSEC[q.trigger] || 'reply'); }
+  // Owner comes from the explicit owner field (server-set); only T12 defaults to Nina. No keyword matching.
+  function ownerOf(q) { return q.owner || (q.trigger === 'T12' ? 'Nina' : 'Roni'); }
+  function secOf(q) { return ownerOf(q) === 'Nina' ? 'nina' : (TSEC[q.trigger] || 'unsorted'); }
+  function unstaffed() { return S.data.unstaffed || []; }
+  function ninaCount() { return unstaffed().length + (S.data.queue || []).filter(function (q) { return q.status === 'draft' && ownerOf(q) === 'Nina' && q.trigger !== 'T12'; }).length; }
+  function daysTxt(n) { return n === 1 ? '1 day' : n + ' days'; }
   function inTab(q, t) { return t === 'all' || (t === 'approved' ? /^approved/.test(q.status) : q.status === t); }
   function queue() {
     var Q = S.data.queue || [], tabs = [['draft', 'To review'], ['approved', 'Approved'], ['dismissed', 'Dismissed'], ['all', 'All']];
@@ -127,20 +138,20 @@
     if (!sec) {
       var mine = drafts().length;
       h = '<h1>Approval queue</h1><p class="sub">' + mine + ' for you to review. Nothing is ever sent by the app.</p><div class="tiles">';
-      h += SECS.map(function (x) { var n = Q.filter(function (q) { return q.status === 'draft' && secOf(q) === x[0]; }).length;
+      h += SECS.map(function (x) { var n = x[0] === 'nina' ? ninaCount() : Q.filter(function (q) { return q.status === 'draft' && secOf(q) === x[0]; }).length;
+        if (x[0] === 'unsorted' && !n) return '';
         return '<button class="tile' + (x[0] === 'nina' ? ' nina' : '') + (n ? '' : ' zero') + '" data-qsec="' + x[0] + '"><span class="ti">' + x[2] + '</span><span class="qtn">' + n + '</span><span class="qtl">' + x[1] + '</span></button>'; }).join('');
       return h + '</div><div class="btns" style="margin:4px 0 12px"><button class="btn sm ghost" data-act="run">⚡ Re-check triggers now</button></div>';
     }
     var S0 = SECS.filter(function (x) { return x[0] === sec; })[0], inSec = Q.filter(function (q) { return secOf(q) === sec; });
     h = '<button class="back" data-qsec="">‹ All sections</button><h1>' + S0[2] + ' ' + S0[1] + '</h1>';
     if (sec === 'nina') {
-      var open = inSec.filter(function (q) { return q.status === 'draft'; }), g = {};
-      open.forEach(function (q) { (g[q.trigger] = g[q.trigger] || []).push(q); });
-      h += '<p class="sub">Nina\u2019s items. View only.</p>';
-      h += Object.keys(g).length ? Object.keys(g).map(function (t) { var L = g[t];
-        var title = t === 'T12' ? 'students unstaffed 7+ days' : 'recruiting items';
-        return '<details class="card grp"><summary><span class="gn">' + L.length + '</span><span class="grow"><b>' + title + '</b><small>Recruiting · tap to see list</small></span><span class="pill p-brand">' + esc(t) + '</span></summary>' +
-          L.map(function (q) { var m = /:\s*(.+?) unstaffed/.exec(q.message || ''); return '<a class="row" href="#/case/' + esc(q.case_id) + '"><div class="grow"><b>' + esc(q.student || q.case_id) + '</b><small>' + esc(m ? m[1] : 'provider') + '</small></div></a>'; }).join('') + '</details>'; }).join('') : '<div class="card empty">Nothing open for Nina.</div>';
+      var U = unstaffed(), other = inSec.filter(function (q) { return q.status === 'draft' && q.trigger !== 'T12'; });
+      h += '<p class="sub">Nina\u2019s items. View only. Days count from when the case first went unstaffed.</p>';
+      h += U.length ? '<details class="card grp" open><summary><span class="gn">' + U.length + '</span><span class="grow"><b>Unstaffed roles</b><small>Longest open first</small></span><span class="pill p-brand">T12</span></summary>' +
+        U.map(function (u) { return '<a class="row uns" href="#/case/' + esc(u.case_id) + '"><div class="grow"><b>' + esc(u.student) + '</b><small>Needs <b>' + esc(u.role) + '</b>' + (u.departed ? ' \u00b7 ' + esc(u.departed) + ' left' : '') + '</small></div><span class="pill p-' + (u.days >= 14 ? 'red' : u.days >= 7 ? 'yellow' : 'unknown') + '">' + daysTxt(u.days) + '</span></a>'; }).join('') + '</details>' : '<div class="card empty">No unstaffed students.</div>';
+      if (other.length) h += '<details class="card grp"><summary><span class="gn">' + other.length + '</span><span class="grow"><b>Other Nina items</b><small>tap to see list</small></span></summary>' +
+        other.map(function (q) { return '<a class="row" href="#/case/' + esc(q.case_id) + '"><div class="grow"><b>' + esc(q.student || q.subject) + '</b><small>' + esc(q.trigger) + '</small></div></a>'; }).join('') + '</details>';
       return h;
     }
     var list = inSec.filter(function (q) { return inTab(q, S.qtab); });
