@@ -48,7 +48,7 @@
   }
   function render() {
     var n = drafts().length, b = $('#qBadge'); b.hidden = !n; b.textContent = n;
-    var v = { home: home, cases: cases, case: caseView, queue: queue, triggers: triggers, settings: settings }[S.route] || home;
+    var v = { home: home, cases: cases, case: caseView, queue: queue, triggers: triggers, settings: settings, reports: reports }[S.route] || home;
     $('#view').innerHTML = v();
     bind();
   }
@@ -57,7 +57,7 @@
     var D = S.data, sm = D.summary, n = D.cases.length;
     var h = '<h1>Good ' + (new Date().getHours() < 12 ? 'morning' : 'afternoon') + ', Roni</h1><p class="sub">' + n + ' cases · ' + drafts().length + ' drafts waiting for you · ' + esc(new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })) + '</p>';
     var sy = D.sync;
-    if (sy && sy.stale) h += '<div class="banner sync"><b>Roster check.</b> Cases come from TTG_Case_Roster' + (sy.roster_ok ? '' : ' \u2014 <b>roster could not be read, showing Case Board instead</b>') +
+    if (sy && sy.stale) h += '<div class="banner sync"><b>Roster check.</b> Cases come from TTG_Case_Roster' + (sy.roster_ok ? '' : ': <b>roster could not be read, showing Case Board instead</b>') +
       (sy.roster_updated ? ' (last updated ' + esc(sy.roster_updated) + (sy.roster_age_days != null ? ', ' + daysTxt(sy.roster_age_days) + ' ago' : '') + ')' : '') + '.' +
       (sy.board_only && sy.board_only.length ? '<br>' + sy.board_only.length + ' on the Case Board but not the roster: ' + esc(sy.board_only.join(', ')) + '.' : '') +
       (sy.roster_only && sy.roster_only.length ? '<br>' + sy.roster_only.length + ' on the roster but not the Case Board: ' + esc(sy.roster_only.join(', ')) + '.' : '') + '</div>';
@@ -104,9 +104,9 @@
     var h = '<a href="#/cases" class="small" style="color:var(--brand);text-decoration:none">‹ Case board</a><h1>' + esc(c.student) + '</h1><p class="sub">' + esc(c.setting || 'Setting not on file') + ' · ID ' + esc(c.id) + '</p>';
     h += '<div class="chips" style="flex-wrap:wrap">' + SIDES.map(function (s) { return '<button class="pill p-' + c.health[s] + '" data-edit="Health: ' + s[0].toUpperCase() + s.slice(1) + '" style="border:0;cursor:pointer">' + s + ': ' + (c.health[s] === 'unknown' ? '?' : c.health[s]) + '</button>'; }).join('') + '</div>';
     if (c.why) h += '<div class="banner"><b>Why:</b> ' + esc(c.why) + '</div>';
-    if (c.gaps && c.gaps.length) h += '<div class="banner"><b>Unstaffed:</b> ' + c.gaps.map(function (g) { return esc(g.role) + ' for ' + daysTxt(g.days) + (g.departed ? ' (' + esc(g.departed) + ' left)' : ''); }).join('; ') + ' \u2014 on Nina\u2019s list.</div>';
+    if (c.gaps && c.gaps.length) h += '<div class="banner"><b>Unstaffed:</b> ' + c.gaps.map(function (g) { return esc(g.role) + ' for ' + daysTxt(g.days) + (g.departed ? ' (' + esc(g.departed) + ' left)' : ''); }).join('; ') + '. On Nina\u2019s list.</div>';
     if (c.source === 'board') h += '<div class="banner"><b>Not on TTG_Case_Roster.</b> This case only exists on the Case Board.</div>';
-    h += '<h2>Quick actions</h2><div class="qa"><button data-qa="Draft check-in to parent">✉️ Draft check-in to parent</button><button data-qa="Ask BCBA for update">🩺 Ask BCBA for update</button><button data-qa="Summarize this case">📝 Summarize this case</button><button data-qa="Prep Josh update">📊 Prep Josh update</button></div>';
+    h += '<h2>Quick actions</h2><div class="qa"><button data-qa="Draft check-in to parent">✉️ Draft check-in to parent</button><button data-qa="Ask BCBA for update">🩺 Ask BCBA for update</button><button data-qa="Summarize this case">📝 Summarize this case</button><button data-qa="Prep Josh update">📊 Prep Josh update</button><button data-rep-case="1">📄 Status report</button></div>';
     h += '<div class="twocol"><div><h2>Team</h2><div class="card team">' + (c.team.length ? c.team.map(function (t) {
       return '<div class="row"><span class="av">' + ini(t.name) + '</span><div class="grow"><b>' + esc(t.name) + '</b><small>' + esc(t.role) + (t.email ? ' · ' + esc(t.email) : '') + (t.phone ? ' · ' + esc(t.phone) : '') + '</small></div></div>';
     }).join('') : '<div class="empty">No team on file</div>') + (c.team.some(function (t) { return t.role === 'Parent'; }) ? '' : '<div class="row"><span class="av">?</span><div class="grow"><b class="miss">Parent contact missing</b><small><span class="edit" data-edit="Parent contact">Add parent contact</span></small></div></div>') + '</div>';
@@ -115,6 +115,8 @@
       (c.assignments.length ? '<div class="small" style="margin-top:8px">' + c.assignments.map(function (a) { return '<div>• ' + esc(a.provider + ' (' + a.role + '): ' + (a.schedule || 'no schedule')) + '</div>'; }).join('') + '</div>' : '') + '</div></div>';
     h += '<div><h2>Last contacts</h2><div class="card"><dl class="kv">' + ef(c, 'Last contact: parent', 'Parent') + ef(c, 'Last contact: BCBA', 'BCBA') + ef(c, 'Last contact: provider(s)', 'Provider(s)') + ef(c, 'Last contact: Nina', 'Nina') + '</dl></div>';
     h += '<h2>Clinical due dates</h2><div class="card"><dl class="kv">' + ef(c, 'Assessment/report due') + ef(c, 'Progress report due') + ef(c, 'Tx plan review') + ef(c, 'Related services (Nina)', 'Related services') + '</dl></div>';
+    h += '<h2>Intake papers</h2><div class="card">' + intakeCard(c.intake) + '</div>';
+    h += '<h2>Ensora</h2><div class="card">' + (c.ensora ? '<dl class="kv"><dt>Use</dt><dd>' + esc(c.ensora.use) + '</dd><dt>Data on file</dt><dd>' + esc(c.ensora.data || 'None') + '</dd>' + (c.ensora.last ? '<dt>Last capture</dt><dd>' + esc(c.ensora.last) + '</dd>' : '') + (c.ensora.missing ? '<dt>Missing</dt><dd>' + esc(c.ensora.missing) + '</dd>' : '') + '</dl>' : '<div class="small">No Ensora record.</div>') + '</div>';
     h += '<h2>Billing</h2><div class="card"><dl class="kv">' + ef(c, 'Notes submitted') + ef(c, 'Invoice submitted') + ef(c, 'Billing gap', 'Billing gap (sessions)') + '</dl></div>';
     h += '<h2>Notes timeline</h2><div class="card"><dl class="kv" style="margin-bottom:10px">' + ef(c, 'Roster notes (live issues)', 'Live issues') + ef(c, 'Why', 'Why (board)') + '</dl><textarea id="noteIn" placeholder="Add a note (call summary, decision…)"></textarea><div class="btns"><button class="btn sm" data-act="note">Add note</button></div>' +
       '<div class="qtl" style="margin-top:14px">' + (c.notes.length ? c.notes.map(function (n) { return '<div><small>' + fmtTs(n.ts) + ' · ' + esc(n.author) + ' · ' + esc(n.type) + '</small>' + esc(n.text) + '</div>'; }).join('') : '<div class="small">No notes yet.</div>') + '</div></div>';
@@ -181,6 +183,51 @@
     h += '</div><div class="small">Last Josh update: ' + esc(st.last_josh_update.value || 'never') + ' · Last Nina sync: ' + esc(st.last_nina_sync.value || 'never') + ' (set when you approve T1/T2)</div><div class="btns"><button class="btn" data-act="saveSet">Save cadence</button></div>';
     h += '<h2>Privacy</h2><div class="card small">Only your admin link opens this app. Case numbers, SSNs and TINs are never sent to the app. Case data stays in memory on this device and is not saved offline.<div class="btns"><button class="btn sm warn" data-act="forget">Sign out on this device</button></div></div>';
     return h;
+  }
+  /* ---------- Reports (drafts only) ---------- */
+  var RKINDS = [['student', 'Student status'], ['provider', 'Provider hours and billing'], ['intake', 'Intake papers'], ['month', 'Monthly case report']];
+  function stPill(st) { return /^received$/i.test(st) ? pill('green', st) : /^(received, incomplete|partial)/i.test(st) ? pill('yellow', st) : /^not received/i.test(st) ? pill('red', st) : pill('unknown', st || 'unknown'); }
+  function links(L) { return (L || []).map(function (u, i) { return '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">Source ' + (i + 1) + '</a>'; }).join(' · '); }
+  function intakeCard(I) {
+    if (!I) return '<div class="small">No intake record.</div>';
+    return '<div class="meta">' + stPill(I.status) + '</div><dl class="kv">' + (I.who ? '<dt>Team</dt><dd>' + esc(I.who) + '</dd>' : '') + (I.received ? '<dt>Received</dt><dd>' + esc(I.received) + '</dd>' : '') +
+      (I.missing ? '<dt>Missing</dt><dd>' + esc(I.missing.replace(/^Forms from: /, 'Forms from ')) + '</dd>' : '') + (I.notes ? '<dt>Notes</dt><dd>' + esc(I.notes) + '</dd>' : '') + '</dl>' + (I.links && I.links.length ? '<div class="small" style="margin-top:6px">' + links(I.links) + '</div>' : '');
+  }
+  function provNames() {
+    var m = {}; (S.data.intake || []).forEach(function (x) { if (x.kind === 'Provider') m[x.name] = 1; });
+    S.data.cases.forEach(function (c) { c.team.forEach(function (t) { if (t.role !== 'Parent' && t.role !== 'Related service' && !/^tbd$/i.test(t.name)) m[t.name] = 1; }); });
+    return Object.keys(m).sort();
+  }
+  function reports() {
+    var k = S.rkind || 'student', R = S.data.reports || [], I = S.data.intake || [], mo = S.rmonth || (S.data.today || '').slice(0, 7);
+    var h = '<h1>Reports</h1><p class="sub">Drafts only. Nothing is sent.</p>';
+    h += '<div class="chips" style="flex-wrap:wrap">' + RKINDS.map(function (x) { return '<button class="chip' + (k === x[0] ? ' on' : '') + '" data-rkind="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div><div class="card">';
+    if (k === 'student') h += '<label class="small">Student</label><select id="rCase">' + S.data.cases.slice().sort(function (a, b) { return a.student.localeCompare(b.student); }).map(function (c) { return '<option value="' + esc(c.id) + '"' + (S.rcase === c.id ? ' selected' : '') + '>' + esc(c.student) + '</option>'; }).join('') + '</select>';
+    if (k === 'provider') h += '<label class="small">Provider</label><select id="rProv">' + provNames().map(function (n) { return '<option' + (S.rprov === n ? ' selected' : '') + '>' + esc(n) + '</option>'; }).join('') + '</select>';
+    if (k === 'provider' || k === 'month') h += '<label class="small">Month</label><input type="month" id="rMonth" value="' + esc(mo) + '">';
+    h += '<div class="btns"><button class="btn" data-act="mkrep">Make draft</button></div></div>';
+    var cnt = function (kind, re) { return I.filter(function (x) { return x.kind === kind && re.test(x.status); }).length; };
+    if (I.length) h += '<h2>Intake papers</h2><div class="card"><dl class="kv"><dt>Providers</dt><dd>' + cnt('Provider', /^received/i) + ' received · ' + cnt('Provider', /^partial/i) + ' partial · ' + cnt('Provider', /^not received/i) + ' none</dd><dt>Students</dt><dd>' + cnt('Student', /^received/i) + ' complete · ' + cnt('Student', /^partial/i) + ' partial · ' + cnt('Student', /^not received/i) + ' none</dd></dl>' +
+      '<details style="margin-top:8px"><summary class="small">Show table</summary>' + ['Student', 'Provider', 'Other'].map(function (kind) {
+        var L = I.filter(function (x) { return x.kind === kind; }); if (!L.length) return '';
+        return '<h3 style="margin:12px 0 4px">' + kind + 's</h3>' + L.map(function (x) { return '<div class="row" style="align-items:flex-start"><div class="grow"><b>' + esc(x.name) + '</b> ' + stPill(x.status) + (x.received ? '<small>' + esc(x.received) + '</small>' : '') + (x.missing ? '<small>Missing: ' + esc(x.missing.replace(/^Forms from: /, '')) + '</small>' : '') + (x.links.length ? '<small>' + links(x.links) + '</small>' : '') + '</div></div>'; }).join('');
+      }).join('') + '</details></div>';
+    h += '<h2>Drafts</h2>' + (R.length ? R.map(function (r) {
+      return '<div class="card qitem" data-rid="' + esc(r.id) + '"><div class="meta">' + (r.status === 'draft' ? pill('yellow', 'draft') : pill('green', r.status)) + '<span class="small">' + fmtTs(r.created) + '</span></div><b>' + esc(r.title) + '</b>' +
+        '<div class="btns"><button class="btn sm" data-rop="open">Open</button>' + (r.status === 'draft' ? '<button class="btn sm ghost" data-rop="done">Mark reviewed</button>' : '<button class="btn sm ghost" data-rop="reopen">Back to draft</button>') + '<button class="btn sm warn" data-rop="remove">Remove</button></div></div>';
+    }).join('') : '<div class="card empty">No drafts yet.</div>');
+    return h;
+  }
+  function openReport(r) {
+    openSheet('<div class="hd"><b>' + esc(r.title) + '</b><button class="icon" data-close>✕</button></div><div class="small" style="margin-bottom:8px">Draft · ' + fmtTs(r.created) + '</div><textarea id="rBody" style="min-height:52vh;font-size:13px">' + esc(r.body) + '</textarea>' +
+      '<div class="btns"><button class="btn" id="rCopy">Copy</button><button class="btn ghost" id="rDl">Download</button><button class="btn ghost" id="rSave">Save</button></div>');
+    $('#rCopy').onclick = function () { var t = $('#rBody').value; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { toast('Copied'); }).catch(function () { $('#rBody').select(); document.execCommand('copy'); toast('Copied'); }); };
+    $('#rDl').onclick = function () { var b = new Blob([$('#rBody').value], { type: 'text/plain' }), a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = r.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') + '.txt'; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500); };
+    $('#rSave').onclick = function () { api('reportAction', { id: r.id, op: 'edit', body: $('#rBody').value }).then(function (d) { S.data.reports = d.reports; toast('Saved'); closeSheet(); render(); }).catch(function (e) { toast(e.message); }); };
+  }
+  function makeReport(data) {
+    toast('Making draft…');
+    return api('makeReport', data).then(function (d) { S.data.reports = d.reports; if (S.route === 'reports') render(); openReport(d.report); }).catch(function (e) { toast(e.message); });
   }
   /* ---------- Katya panel ---------- */
   function openSheet(html) { var s = $('#sheet'); $('.sheet-card', s).innerHTML = html; s.hidden = false; }
@@ -259,10 +306,24 @@
         qop(id, op);
       };
     });
+    v.querySelectorAll('[data-rkind]').forEach(function (b) { b.onclick = function () { S.rkind = b.dataset.rkind; render(); }; });
+    var rc = $('#rCase'); if (rc) rc.onchange = function () { S.rcase = rc.value; };
+    var rp = $('#rProv'); if (rp) rp.onchange = function () { S.rprov = rp.value; };
+    var rm = $('#rMonth'); if (rm) rm.onchange = function () { S.rmonth = rm.value; };
+    v.querySelectorAll('[data-rep-case]').forEach(function (b) { b.onclick = function () { makeReport({ kind: 'student', case_id: S.caseId }); }; });
+    v.querySelectorAll('[data-rop]').forEach(function (b) {
+      b.onclick = function () {
+        var id = b.closest('[data-rid]').dataset.rid, r = (S.data.reports || []).filter(function (x) { return x.id === id; })[0], op = b.dataset.rop;
+        if (op === 'open') return openReport(r);
+        if (op === 'remove' && !confirm('Remove this draft?')) return;
+        api('reportAction', { id: id, op: op }).then(function (d) { S.data.reports = d.reports; render(); }).catch(function (e) { toast(e.message); });
+      };
+    });
     v.querySelectorAll('[data-act]').forEach(function (b) {
       b.onclick = function () {
         var a = b.dataset.act;
         if (a === 'run') runTriggers();
+        if (a === 'mkrep') { var k = S.rkind || 'student', d = { kind: k }; if (k === 'student') d.case_id = ($('#rCase') || {}).value; if (k === 'provider') d.provider = ($('#rProv') || {}).value; if (k === 'provider' || k === 'month') d.month = ($('#rMonth') || {}).value; makeReport(d); }
         if (a === 'note') { var t = $('#noteIn').value.trim(); if (!t) return; api('addNote', { case_id: S.caseId, text: t }).then(function (d) { replaceCase(d.case); toast('Note added'); }).catch(function (e) { toast(e.message); }); }
         if (a === 'saveSet') { var vals = {}; v.querySelectorAll('[data-set]').forEach(function (i) { vals[i.dataset.set] = i.value; }); api('saveSettings', { values: vals }).then(function (d) { S.data.settings = d.settings; toast('Cadence saved'); load(true); }).catch(function (e) { toast(e.message); }); }
         if (a === 'forget') { if (confirm('Remove your key from this device?')) { localStorage.removeItem('ttgops.k'); location.reload(); } }
