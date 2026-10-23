@@ -430,14 +430,17 @@
     var url = apiUrl();
     if (!url) { vError('TTG Ops is not set up on this site.'); return; }
     vLoading();
-    fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: key, action: 'bootstrap', data: {} }), redirect: 'follow', referrerPolicy: 'no-referrer', cache: 'no-store', credentials: 'omit' })
+    var ac = window.AbortController ? new AbortController() : null, tm = setTimeout(function () { if (ac) ac.abort(); }, 60000);
+    fetch(url, { signal: ac ? ac.signal : undefined, method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: key, action: 'bootstrap', data: {} }), redirect: 'follow', referrerPolicy: 'no-referrer', cache: 'no-store', credentials: 'omit' })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (j) {
         if (!j || j.ok === false || j.error) { var er = new Error((j && j.error) || 'unauthorized'); er.auth = /unauth|key|denied|forbidden/i.test(er.message); throw er; }
         if (typed) { try { if (localStorage.getItem('ttgops.k') !== key) localStorage.removeItem('ttgops.cache'); localStorage.setItem('ttgops.k', key); } catch (x) {} }
-        start(SCM.fromLive(j.data || j));
+        clearTimeout(tm); start(SCM.fromLive(j.data || j));
       })
       .catch(function (e) {
+        clearTimeout(tm);
+        if (e.name === 'AbortError') { vError('The TTG Ops server took too long to answer. Try again.'); return; }
         if (e.auth) vLock(typed ? 'Key not accepted. Check it and try again.' : 'The key saved on this device was not accepted. Enter it again.', true);
         else vError('The TTG Ops server did not answer (' + (e.message || 'network error') + '). Check the connection and try again.');
       });
