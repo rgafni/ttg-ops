@@ -1,9 +1,20 @@
-# TTG showcase
+# TTG showcase (v5)
 
-Standalone phone-first demo of the TTG Students and Providers CRM. Every record is fictional (data.js). It loads no config, no API and no key, and reads no TTG Ops data.
+Phone-first Students and Providers CRM. One app, two data modes. No student data lives in this folder.
 
-Routes (hash):
-- `#/` home, `#/alerts`, `#/alerts/banks` (also pets, docs, notes, license, intake, dates)
-- `#/students`, `#/providers` (search and filters)
-- `#/students/S-1001` overview, `/services`, `/documents`, `/notes`, `/doc/1`
-- `#/providers/P-201` overview, `/students`, `/schedule`, `/notes`
+## Data modes
+- **Live** (`showcase/`): real TTG Ops data, loaded at runtime from the TTG Ops API (the same `bootstrap` call /platform/ makes, read only) with the key saved on this device by TTG Ops (`localStorage ttgops.k`). With no key the page shows a key prompt and loads nothing. A typed key is saved only after the API accepts it. Data is held in memory only: never written to localStorage, sessionStorage, the service worker cache, or the URL. "Forget key" removes the key from this device (TTG Ops too).
+- **Demo** (`showcase/?demo`): fictional data from `data.js` and `demo-docs.js`. Never calls the API.
+
+The API is unchanged. It only answers calls that carry the admin key and never returns case numbers, SSNs or TINs.
+
+## Files
+- `model.js` adapters: live bootstrap or demo data into one model. Missing values stay empty and show "Not on file".
+- `app.js` screens, alerts, search, sort, filters, router.
+- `data.js`, `demo-docs.js` fictional demo only.
+
+## Routes (hash)
+`#/`, `#/students`, `#/providers`, `#/alerts[/GROUP]`, `#/students/ID[/services|/records|/notes]`, `#/students/ID/doc/N` (demo), `#/providers/ID[/students|/schedule|/notes]`
+
+## Rules
+Lists sort by last name (everything after the first given name; single names sort by that name). Alerts sort by urgency. Notes newest first. Dates read `Oct 23, 2026` everywhere.
