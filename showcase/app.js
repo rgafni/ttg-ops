@@ -1,4 +1,4 @@
-/* TTG showcase v5. One app, two data modes:
+/* TTG showcase v6. One app, two data modes:
    LIVE: real TTG Ops data, fetched at runtime from the TTG Ops API with the key saved on this device (same key and
          same bootstrap call as /platform/). Held in memory only; never written to storage. No key, no data.
    DEMO: fictional data from data.js, reached with ?demo. Never calls the API.
@@ -238,7 +238,7 @@
     if (tab === 'overview') {
       if (mine.length) b += sec('alerts', 'Needs attention', mine.length + '', attn(mine));
       b += sec('profile', 'Profile', '', kv([s.last ? null : ['Last name', ''], ['Date of birth', s.dob ? fd(s.dob) : ''], ['Age', s.age != null ? String(s.age) : ''], ['Grade', s.grade], ['School', s.school], ['Borough', s.borough], ['Classification', s.cls], ['OSIS', s.osis], ['Attends school', s.attends], ['Setting', s.setting], ['Home language', s.language]]));
-      b += sec('family', 'Guardian', '', kv([['Name', s.guardian], ['Phone', tel(s.guardianPhone), 1], ['Email', mail(s.guardianEmail), 1], ['Second contact', s.guardian2, 0, 1]]));
+      b += sec('family', 'Guardian', '', kv([['Name', s.guardian], ['Phone', tel(s.guardianPhone), 1], ['Email', mail(s.guardianEmail), 1], ['Address', s.address, 0, M.mode === 'demo' ? 1 : 0], ['Second contact', s.guardian2, 0, 1]]));
       var team = []; s.lines.forEach(function (l) { if (l.pid && !team.some(function (x) { return x.pid === l.pid; })) team.push(l); });
       b += sec('team', 'Team', team.length ? plural(team.length, 'provider') : '', team.length ? '<div class="list">' + team.map(function (l) { var p = prv(l.pid), ls = s.lines.filter(function (x) { return x.pid === l.pid; }); return row('#/providers/' + p.id, av(p), nm(p), rr(esc(ls.map(function (x) { return x.svc; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join(', '))), Jw([ls.some(function (x) { return x.wk != null; }) ? hw(ls.reduce(function (a, x) { return a + (x.wk || 0); }, 0)) : '', p.phone ? '<span class="nw">' + esc(p.phone) + '</span>' : ''])); }).join('') + '</div>' : empty('No providers on file'));
       b += sec('case', 'Case', '', kv([['Case number', s.caseNo], ['Hearing', s.hearingDate ? fd(s.hearingDate) : ''], ['Order', s.orderDate ? fd(s.orderDate) : ''], ['Outcome', s.outcome], ['Attorney', s.lawyer ? Jw([esc(s.lawyer.name), esc(s.lawyer.firm)]) : '', 1], ['Attorney phone', s.lawyer ? tel(s.lawyer.phone) : '', 1]]));

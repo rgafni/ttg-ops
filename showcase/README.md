@@ -1,4 +1,4 @@
-# TTG showcase (v5)
+# TTG showcase (v6)
 
 Phone-first Students and Providers CRM. One app, two data modes. No student data lives in this folder.
 
@@ -6,7 +6,7 @@ Phone-first Students and Providers CRM. One app, two data modes. No student data
 - **Live** (`showcase/`): real TTG Ops data, loaded at runtime from the TTG Ops API (the same `bootstrap` call /platform/ makes, read only) with the key saved on this device by TTG Ops (`localStorage ttgops.k`). With no key the page shows a key prompt and loads nothing. A typed key is saved only after the API accepts it. Data is held in memory only: never written to localStorage, sessionStorage, the service worker cache, or the URL. "Forget key" removes the key from this device (TTG Ops too).
 - **Demo** (`showcase/?demo`): fictional data from `data.js` and `demo-docs.js`. Never calls the API.
 
-The API is unchanged. It only answers calls that carry the admin key and never returns case numbers, SSNs or TINs.
+The API only answers calls that carry the admin key and never returns case numbers, SSNs or TINs. Since v6, `bootstrap` also returns read-only fields from Nina's student chart per matching case (`chart`: date of birth, age, guardian address, school when named, attends school, schedule, provider phone and email) plus a `chart_sync` summary. They fill the Profile, Guardian address, service schedule and provider contact rows; anything the chart does not have still shows "Not on file".
 
 ## Files
 - `model.js` adapters: live bootstrap or demo data into one model. Missing values stay empty and show "Not on file".

@@ -1,4 +1,4 @@
-/* TTG showcase v5: data adapters. Turns either the fictional demo set (data.js) or the live TTG Ops bootstrap
+/* TTG showcase v6: data adapters. Turns either the fictional demo set (data.js) or the live TTG Ops bootstrap
    (fetched at runtime with the device key, kept in memory only) into one model the screens read.
    Nothing here contains real data. Missing values stay null so screens can show "Not on file". */
 (function () {
@@ -76,14 +76,23 @@
         if (p && !lines.some(function (l) { return l.pid === p.id; })) lines.push({ svc: svcName(t.role), role: s(t.role), pid: p.id, provider: p.name, setting: '', slots: [], schedText: '', wk: null, mandate: '', start: '', end: '', status: 'Active', note: '', ai: '', caseNo: '' });
       });
       (c.gaps || []).forEach(function (g) { lines.push({ svc: svcName(g.role), role: s(g.role), pid: '', provider: '', setting: '', slots: [], schedText: '', wk: null, mandate: '', start: '', end: '', status: 'Unstaffed', since: iso(g.since), days: g.days, departed: s(g.departed), note: '', ai: '', caseNo: '' }); });
+      /* Nina's student chart (read only, from bootstrap c.chart): provider phone/email fill the provider record if the hub has none,
+         and the chart schedule fills that provider's line on this case if it has no schedule. */
+      var ch = c.chart || null;
+      if (ch && ch.provider && s(ch.provider.name)) {
+        var cp = prov(ch.provider.name, '', ch.provider.provider_id, { phone: ch.provider.phone, email: ch.provider.email });
+        var csch = blank(ch.schedule);
+        if (cp && csch) lines.forEach(function (l) { if (l.pid === cp.id && !l.schedText && !l.slots.length) { l.schedText = csch; l.slots = parseSched(csch); l.wk = wkFrom(l.slots); } });
+      }
       lines.sort(function (a, b) { return svcSort(a.svc, b.svc); });
       var pc = blank(f['Parent contact']), g = { name: '', phone: '', email: '' };
       if (pc) { var em = /[\w.+-]+@[\w.-]+\.\w+/.exec(pc), ph = /\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}/.exec(pc); g = { name: s(pc.split(',')[0]).replace(/\(.*?\)/g, '').trim(), phone: ph ? ph[0] : '', email: em ? em[0] : '' }; if (/@|\d{3}/.test(g.name)) g.name = ''; }
       if (parent) g = { name: nameParts(parent.name).name || g.name, phone: s(parent.phone) || g.phone, email: s(parent.email) || g.email };
       var b = c.bank || {}, banks = b.total ? [{ svc: 'Hour bank', auth: +b.total, used: +b.used || 0, end: iso(b.expiry), caseNo: '', provider: '' }] : [];
       var hw = num(f['Sched hrs/wk']);
-      var st = { id: c.id, name: np.name, first: np.first, last: np.last, sortKey: np.sortKey, letter: np.letter, source: c.source === 'board' ? 'Case board' : 'Case roster',
-        dob: null, age: null, grade: null, school: null, borough: null, cls: null, dx: null, osis: null, language: null, attends: null, address: null,
+      var st = { id: c.id, name: np.name, first: np.first, last: np.last, sortKey: np.sortKey, letter: np.letter, source: (c.source === 'board' ? 'Case board' : 'Case roster') + (ch ? ' + Nina chart' : ''),
+        dob: ch && iso(ch.dob) || null, age: ch && ch.age != null && ch.dob ? +ch.age : null, grade: null, school: ch && blank(ch.school) || null, borough: null, cls: null, dx: null, osis: null, language: null,
+        attends: ch && blank(ch.attends_school) || null, address: ch && blank(ch.guardian_address) || null,
         guardian: g.name || null, guardianPhone: g.phone || null, guardianEmail: g.email || null, guardian2: null, lawyer: null,
         setting: blank(c.setting) || null, settings: settingOf(c.setting + ' ' + lines.map(function (l) { return l.setting; }).join(' ')),
         hrsWk: hw, hrsTxt: hw == null ? blank(f['Sched hrs/wk']) : '', lines: lines, banks: banks, gaps: (c.gaps || []).map(function (x) { return { role: svcName(x.role), since: iso(x.since), days: x.days }; }),
