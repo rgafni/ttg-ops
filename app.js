@@ -1,344 +1,554 @@
-/* TTG Ops front-end. All data comes from the authenticated Apps Script API; nothing is stored in the repo,
-   and case data is kept in memory only (not written to localStorage or the service-worker cache). */
+/* TTG Ops v4 — six-portal oversight app.
+   Live mode: data only from the private, key-gated Apps Script API; kept in memory (never localStorage, URLs or the SW cache).
+   Fixture mode (?fixtures=1): fictional data through an in-memory stand-in; never touches the network, even if a key is stored.
+   Nothing here sends email or texts. Approving a draft only marks it for a person to send. */
 (function () {
   'use strict';
-  var $ = function (s, r) { return (r || document).querySelector(s); };
-  var S = { data: null, route: 'home', caseId: null, filt: { q: '', side: 'any', color: 'any', bcba: '', prov: '' }, qtab: 'draft', busy: false };
-  var SIDES = ['relationship', 'service', 'clinical', 'billing'];
-  var KEY = localStorage.getItem('ttgops.k') || '';
+  var M = window.TTG_V4_MODEL, BC = window.TTG_BILLING;
+  var $ = function (s, el) { return (el || document).querySelector(s); };
+  var view = $('#view');
+  var FIXTURE = /[?&](fixtures|demo)=1(&|$)/.test(location.search);
+  var S = { mode: FIXTURE ? 'fixture' : 'live', boot: null, P: null, clinical: null, billing: null, loading: {}, route: 'home', params: [],
+    q: '', stuQ: '', noteF: {}, rep: {}, reportDraft: null, busy: false };
+  var KEY = '', fake = null, started = false;
+
+  /* ---------- API ---------- */
   function apiUrl() { return (window.TTG_CONFIG && TTG_CONFIG.API_URL) || localStorage.getItem('ttgops.api') || ''; }
-  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
-  function toast(t) { var e = $('#toast'); e.textContent = t; e.hidden = false; clearTimeout(e._t); e._t = setTimeout(function () { e.hidden = true; }, 2600); }
+  function allowedApi(u) { return /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(u) || /^http:\/\/(localhost|127\.0\.0\.1):\d+\/api$/.test(u); }
   function api(action, data) {
-    return fetch(apiUrl(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: KEY, action: action, data: data || {} }), redirect: 'follow', referrerPolicy: 'no-referrer' })
-      .then(function (r) { return r.json(); }).then(function (j) { if (!j.ok) throw new Error(j.error || 'error'); return j; });
-  }
-  function load(quiet) {
-    if (!quiet) $('#view').innerHTML = '<div class="empty">Loading cases…</div>';
-    return api('bootstrap').then(function (d) { S.data = d; render(); }).catch(function (e) {
-      if (/unauthorized/.test(e.message)) return gate('key');
-      $('#view').innerHTML = '<div class="card empty">Could not reach the TTG Ops service.<br><span class="small">' + esc(e.message) + '</span><div class="btns" style="justify-content:center"><button class="btn" onclick="location.reload()">Try again</button></div></div>';
-    });
-  }
-  function gate(kind) {
-    var h = '<div class="gate"><img src="icons/icon-192.png" alt=""><h1>TTG Ops</h1>';
-    if (kind === 'key') h += '<p class="sub">This app is private. Open it with your personal admin link.</p>';
-    else h += '<p class="sub">One-time step: paste the Apps Script web app URL (ends in <b>/exec</b>).</p><input id="apiIn" type="text" placeholder="https://script.google.com/macros/s/…/exec"><div class="btns" style="justify-content:center"><button class="btn" id="apiSave">Connect</button></div>';
-    $('#view').innerHTML = h + '</div>'; $('#katyaFab').hidden = true;
-    var b = $('#apiSave'); if (b) b.onclick = function () {
-      var v = $('#apiIn').value.trim();
-      if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(v)) return toast('That doesn\u2019t look like a web app /exec URL');
-      localStorage.setItem('ttgops.api', v); $('#katyaFab').hidden = false; load();
-    };
-  }
-  /* ---------- helpers ---------- */
-  function caseBy(id) { return (S.data.cases || []).filter(function (c) { return c.id === id; })[0]; }
-  function dots(h) { return '<span class="hdots">' + SIDES.map(function (s) { return '<span class="dot ' + h[s] + '" title="' + s + ': ' + h[s] + '"></span>'; }).join('') + '</span>'; }
-  function pill(c, t) { return '<span class="pill p-' + c + '">' + esc(t || c) + '</span>'; }
-  function val(v) { return v && !/^\[(no source|blank|none listed)\]$/i.test(v) && !/^from schedule:/i.test('x') ? esc(v) : '<span class="miss">no data yet</span>'; }
-  function ini(n) { return esc(String(n).split(/\s+/).map(function (x) { return x[0]; }).join('').slice(0, 2).toUpperCase()); }
-  function fmtTs(t) { if (!t) return ''; var d = new Date(t.length <= 10 ? t + 'T12:00' : t); if (isNaN(d)) return esc(t); return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: t.length > 10 ? 'numeric' : undefined, minute: t.length > 10 ? '2-digit' : undefined }) + (t.length > 10 ? ' ET' : ''); }
-  function drafts() { return (S.data.queue || []).filter(function (q) { return q.status === 'draft' && ownerOf(q) !== 'Nina'; }); }
-  /* ---------- router ---------- */
-  function route() {
-    var h = location.hash.replace(/^#\/?/, '').split('/');
-    S.route = h[0] || 'home'; S.caseId = S.route === 'case' ? h[1] : null;
-    document.querySelectorAll('.tabs a').forEach(function (a) { a.classList.toggle('on', a.dataset.r === (S.route === 'case' ? 'cases' : S.route)); });
-    if (S.data) render(); window.scrollTo(0, 0);
-  }
-  function render() {
-    var n = drafts().length, b = $('#qBadge'); b.hidden = !n; b.textContent = n;
-    var v = { home: home, cases: cases, case: caseView, queue: queue, triggers: triggers, settings: settings, reports: reports }[S.route] || home;
-    $('#view').innerHTML = v();
-    bind();
-  }
-  /* ---------- Dashboard ---------- */
-  function home() {
-    var D = S.data, sm = D.summary, n = D.cases.length;
-    var h = '<h1>Good ' + (new Date().getHours() < 12 ? 'morning' : 'afternoon') + ', Roni</h1><p class="sub">' + n + ' cases · ' + drafts().length + ' drafts waiting for you · ' + esc(new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })) + '</p>';
-    var sy = D.sync;
-    if (sy && sy.stale) h += '<div class="banner sync"><b>Roster check.</b> Cases come from TTG_Case_Roster' + (sy.roster_ok ? '' : ': <b>roster could not be read, showing Case Board instead</b>') +
-      (sy.roster_updated ? ' (last updated ' + esc(sy.roster_updated) + (sy.roster_age_days != null ? ', ' + daysTxt(sy.roster_age_days) + ' ago' : '') + ')' : '') + '.' +
-      (sy.board_only && sy.board_only.length ? '<br>' + sy.board_only.length + ' on the Case Board but not the roster: ' + esc(sy.board_only.join(', ')) + '.' : '') +
-      (sy.roster_only && sy.roster_only.length ? '<br>' + sy.roster_only.length + ' on the roster but not the Case Board: ' + esc(sy.roster_only.join(', ')) + '.' : '') + '</div>';
-    h += '<div class="grid4">' + SIDES.map(function (s) {
-      var c = sm.health[s], t = n || 1;
-      return '<a class="card side" href="#/cases" data-side="' + s + '" style="text-decoration:none;color:inherit"><h3>' + s + '</h3><div class="bar">' + ['red', 'yellow', 'green', 'unknown'].map(function (k) { return '<span class="' + k + '" style="width:' + (100 * c[k] / t) + '%"></span>'; }).join('') + '</div><div class="cnts"><span><i class="dot red"></i>' + c.red + '</span><span><i class="dot yellow"></i>' + c.yellow + '</span><span><i class="dot green"></i>' + c.green + '</span><span><i class="dot unknown"></i>' + c.unknown + ' ?</span></div></a>';
-    }).join('') + '</div>';
-    h += '<div class="twocol"><div><h2>Needs you</h2><div class="card">' + (sm.needs.length ? sm.needs.map(function (x, i) {
-      return '<a class="row" href="#/case/' + x.id + '"><span class="rank">' + (i + 1) + '</span><div class="grow"><b>' + esc(x.student) + '</b><small>' + esc(x.why || 'Open drafts') + '</small></div>' + dots(x.health) + '</a>';
-    }).join('') : '<div class="empty">Nothing urgent.</div>') + '</div></div>';
-    var ti = D.today_items || [];
-    h += '<div><h2>Today\u2019s triggers</h2><div class="card">' + (ti.length ? ti.slice(0, 12).map(function (t) {
-      var tr = (D.triggers || []).filter(function (x) { return x.id === t.trigger; })[0] || {};
-      return '<a class="row" href="' + (t.case_id ? '#/case/' + t.case_id : '#/queue') + '"><span class="rank">' + esc(t.trigger) + '</span><div class="grow"><b>' + esc(tr.name || t.trigger) + '</b><small>' + esc((t.student ? t.student + ' · ' : '') + '→ ' + t.recipient + (t.note ? ' · ' + t.note : '')) + '</small></div></a>';
-    }).join('') + (ti.length > 12 ? '<div class="small" style="padding-top:8px">+' + (ti.length - 12) + ' more</div>' : '') : '<div class="empty">No triggers firing today.</div>') +
-      '<div class="btns"><button class="btn" data-act="run">Create drafts in Approval Queue</button></div></div></div></div>';
-    return h;
-  }
-  /* ---------- Case board ---------- */
-  function names(key) { var m = {}; S.data.cases.forEach(function (c) { c.team.forEach(function (t) { if (key === 'bcba' ? t.role === 'BCBA' : (t.role !== 'BCBA' && t.role !== 'Parent')) m[t.name] = 1; }); }); return Object.keys(m).sort(); }
-  function cases() {
-    var F = S.filt, list = S.data.cases.filter(function (c) {
-      if (F.q && (c.student + ' ' + c.bcba + ' ' + c.providers + ' ' + c.setting + ' ' + c.why).toLowerCase().indexOf(F.q.toLowerCase()) < 0) return false;
-      if (F.color !== 'any') { var sides = F.side === 'any' ? SIDES : [F.side]; if (!sides.some(function (s) { return c.health[s] === F.color; })) return false; }
-      if (F.bcba && !c.team.some(function (t) { return t.role === 'BCBA' && t.name === F.bcba; })) return false;
-      if (F.prov && !c.team.some(function (t) { return t.name === F.prov; })) return false;
-      return true;
-    });
-    var opt = function (arr, cur, lab) { return '<option value="">' + lab + '</option>' + arr.map(function (x) { return '<option' + (x === cur ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join(''); };
-    var h = '<h1>Case board</h1><p class="sub">' + list.length + ' of ' + S.data.cases.length + ' cases</p><input type="search" id="q" placeholder="Search student, BCBA, provider…" value="' + esc(F.q) + '">';
-    h += '<div class="chips" style="margin-top:10px">' + ['any', 'red', 'yellow', 'green', 'unknown'].map(function (c) { return '<button class="chip' + (F.color === c ? ' on' : '') + '" data-color="' + c + '">' + (c === 'any' ? 'All colors' : '<i class="dot ' + c + '"></i>' + (c === 'unknown' ? 'No data' : c[0].toUpperCase() + c.slice(1))) + '</button>'; }).join('') + '</div>';
-    h += '<div class="chips">' + ['any'].concat(SIDES).map(function (s) { return '<button class="chip' + (F.side === s ? ' on' : '') + '" data-side2="' + s + '">' + (s === 'any' ? 'Any side' : s[0].toUpperCase() + s.slice(1)) + '</button>'; }).join('') + '</div>';
-    h += '<div class="filters"><select id="fb">' + opt(names('bcba'), F.bcba, 'All BCBAs') + '</select><select id="fp">' + opt(names('prov'), F.prov, 'All providers') + '</select></div>';
-    h += '<div class="card">' + (list.length ? list.map(function (c) {
-      return '<a class="row" href="#/case/' + c.id + '"><div class="grow"><b>' + esc(c.student) + '</b><small>' + esc([c.setting, c.bcba ? 'BCBA ' + c.bcba : 'No BCBA', c.providers].filter(Boolean).join(' · ')) + '</small>' + (c.why ? '<small style="color:var(--ink)">' + esc(c.why) + '</small>' : '') + '</div>' + dots(c.health) + '</a>';
-    }).join('') : '<div class="empty">No cases match.</div>') + '</div>';
-    return h;
-  }
-  /* ---------- Case detail ---------- */
-  function ef(c, k, label) { var v = c.fields[k]; return '<dt>' + esc(label || k) + '</dt><dd><span class="edit" data-edit="' + esc(k) + '">' + val(v) + '</span></dd>'; }
-  function caseView() {
-    var c = caseBy(S.caseId); if (!c) return '<div class="empty">Case not found. <a href="#/cases">Back to board</a></div>';
-    var f = c.fields, pct = c.bank.pct;
-    var h = '<a href="#/cases" class="small" style="color:var(--brand);text-decoration:none">‹ Case board</a><h1>' + esc(c.student) + '</h1><p class="sub">' + esc(c.setting || 'Setting not on file') + ' · ID ' + esc(c.id) + '</p>';
-    h += '<div class="chips" style="flex-wrap:wrap">' + SIDES.map(function (s) { return '<button class="pill p-' + c.health[s] + '" data-edit="Health: ' + s[0].toUpperCase() + s.slice(1) + '" style="border:0;cursor:pointer">' + s + ': ' + (c.health[s] === 'unknown' ? '?' : c.health[s]) + '</button>'; }).join('') + '</div>';
-    if (c.why) h += '<div class="banner"><b>Why:</b> ' + esc(c.why) + '</div>';
-    if (c.gaps && c.gaps.length) h += '<div class="banner"><b>Unstaffed:</b> ' + c.gaps.map(function (g) { return esc(g.role) + ' for ' + daysTxt(g.days) + (g.departed ? ' (' + esc(g.departed) + ' left)' : ''); }).join('; ') + '. On Nina\u2019s list.</div>';
-    if (c.source === 'board') h += '<div class="banner"><b>Not on TTG_Case_Roster.</b> This case only exists on the Case Board.</div>';
-    h += '<h2>Quick actions</h2><div class="qa"><button data-qa="Draft check-in to parent">✉️ Draft check-in to parent</button><button data-qa="Ask BCBA for update">🩺 Ask BCBA for update</button><button data-qa="Summarize this case">📝 Summarize this case</button><button data-qa="Prep Josh update">📊 Prep Josh update</button><button data-rep-case="1">📄 Status report</button></div>';
-    h += '<div class="twocol"><div><h2>Team</h2><div class="card team">' + (c.team.length ? c.team.map(function (t) {
-      return '<div class="row"><span class="av">' + ini(t.name) + '</span><div class="grow"><b>' + esc(t.name) + '</b><small>' + esc(t.role) + (t.email ? ' · ' + esc(t.email) : '') + (t.phone ? ' · ' + esc(t.phone) : '') + '</small></div></div>';
-    }).join('') : '<div class="empty">No team on file</div>') + (c.team.some(function (t) { return t.role === 'Parent'; }) ? '' : '<div class="row"><span class="av">?</span><div class="grow"><b class="miss">Parent contact missing</b><small><span class="edit" data-edit="Parent contact">Add parent contact</span></small></div></div>') + '</div>';
-    h += '<h2>Hour bank</h2><div class="card">' + (pct != null ? '<div class="meter"><span style="width:' + Math.max(0, Math.min(100, pct)) + '%;background:' + (pct < (+S.data.settings.hour_bank_pct.value || 20) ? 'var(--red)' : 'var(--brand2)') + '"></span></div><p class="small">' + pct + '% remaining</p>' : '') + '<dl class="kv">' + ef(c, 'Hour bank total') + ef(c, 'Hours used') + ef(c, 'Auth expiry') + ef(c, 'Sched hrs/wk', 'Scheduled hrs/wk') + '</dl></div>';
-    h += '<h2>Sessions</h2><div class="card"><dl class="kv">' + ef(c, 'Delivered this wk') + ef(c, 'Sched vs delivered (month)', 'Sched vs delivered (mo)') + ef(c, 'Sessions logged (mo)') + '</dl>' +
-      (c.assignments.length ? '<div class="small" style="margin-top:8px">' + c.assignments.map(function (a) { return '<div>• ' + esc(a.provider + ' (' + a.role + '): ' + (a.schedule || 'no schedule')) + '</div>'; }).join('') + '</div>' : '') + '</div></div>';
-    h += '<div><h2>Last contacts</h2><div class="card"><dl class="kv">' + ef(c, 'Last contact: parent', 'Parent') + ef(c, 'Last contact: BCBA', 'BCBA') + ef(c, 'Last contact: provider(s)', 'Provider(s)') + ef(c, 'Last contact: Nina', 'Nina') + '</dl></div>';
-    h += '<h2>Clinical due dates</h2><div class="card"><dl class="kv">' + ef(c, 'Assessment/report due') + ef(c, 'Progress report due') + ef(c, 'Tx plan review') + ef(c, 'Related services (Nina)', 'Related services') + '</dl></div>';
-    h += '<h2>Intake papers</h2><div class="card">' + intakeCard(c.intake) + '</div>';
-    h += '<h2>Ensora</h2><div class="card">' + (c.ensora ? '<dl class="kv"><dt>Use</dt><dd>' + esc(c.ensora.use) + '</dd><dt>Data on file</dt><dd>' + esc(c.ensora.data || 'None') + '</dd>' + (c.ensora.last ? '<dt>Last capture</dt><dd>' + esc(c.ensora.last) + '</dd>' : '') + (c.ensora.missing ? '<dt>Missing</dt><dd>' + esc(c.ensora.missing) + '</dd>' : '') + '</dl>' : '<div class="small">No Ensora record.</div>') + '</div>';
-    h += '<h2>Billing</h2><div class="card"><dl class="kv">' + ef(c, 'Notes submitted') + ef(c, 'Invoice submitted') + ef(c, 'Billing gap', 'Billing gap (sessions)') + '</dl></div>';
-    h += '<h2>Notes timeline</h2><div class="card"><dl class="kv" style="margin-bottom:10px">' + ef(c, 'Roster notes (live issues)', 'Live issues') + ef(c, 'Why', 'Why (board)') + '</dl><textarea id="noteIn" placeholder="Add a note (call summary, decision…)"></textarea><div class="btns"><button class="btn sm" data-act="note">Add note</button></div>' +
-      '<div class="qtl" style="margin-top:14px">' + (c.notes.length ? c.notes.map(function (n) { return '<div><small>' + fmtTs(n.ts) + ' · ' + esc(n.author) + ' · ' + esc(n.type) + '</small>' + esc(n.text) + '</div>'; }).join('') : '<div class="small">No notes yet.</div>') + '</div></div>';
-    var qs = (S.data.queue || []).filter(function (q) { return q.case_id === c.id; });
-    h += '<h2>Outreach for this case</h2><div class="card">' + (qs.length ? qs.map(function (q) { return '<a class="row" href="#/queue"><span class="rank">' + esc(q.trigger) + '</span><div class="grow"><b>' + esc(q.recipient) + '</b><small>' + esc(q.status) + ' · ' + fmtTs(q.updated) + '</small></div></a>'; }).join('') : '<div class="small">No outreach drafts.</div>') + '</div></div></div>';
-    return h;
-  }
-  /* ---------- Approval queue ---------- */
-  var SECS = [['reply', 'Needs your reply', '💬'], ['struct', 'Structural gaps', '🧩'], ['routine', 'Routine updates', '📨'], ['over', 'Oversight', '🔍'], ['bill', 'Billing', '💵'], ['unsorted', 'Unsorted', '🗂️'], ['nina', 'Nina · Recruiting', '👥']];
-  var TSEC = { T1: 'routine', T2: 'routine', T5: 'routine', T3: 'over', T4: 'over', T8: 'over', T6: 'reply', T14: 'reply', T13: 'struct', T7: 'bill', T9: 'bill', T10: 'bill', T11: 'bill', T12: 'nina' };
-  // Owner comes from the explicit owner field (server-set); only T12 defaults to Nina. No keyword matching.
-  function ownerOf(q) { return q.owner || (q.trigger === 'T12' ? 'Nina' : 'Roni'); }
-  function secOf(q) { return ownerOf(q) === 'Nina' ? 'nina' : (TSEC[q.trigger] || 'unsorted'); }
-  function unstaffed() { return S.data.unstaffed || []; }
-  function ninaCount() { return unstaffed().length + (S.data.queue || []).filter(function (q) { return q.status === 'draft' && ownerOf(q) === 'Nina' && q.trigger !== 'T12'; }).length; }
-  function daysTxt(n) { return n === 1 ? '1 day' : n + ' days'; }
-  function inTab(q, t) { return t === 'all' || (t === 'approved' ? /^approved/.test(q.status) : q.status === t); }
-  function queue() {
-    var Q = S.data.queue || [], tabs = [['draft', 'To review'], ['approved', 'Approved'], ['dismissed', 'Dismissed'], ['all', 'All']];
-    var sec = S.qsec, h;
-    if (!sec) {
-      var mine = drafts().length;
-      h = '<h1>Approval queue</h1><p class="sub">' + mine + ' for you to review. Nothing is ever sent by the app.</p><div class="tiles">';
-      h += SECS.map(function (x) { var n = x[0] === 'nina' ? ninaCount() : Q.filter(function (q) { return q.status === 'draft' && secOf(q) === x[0]; }).length;
-        if (x[0] === 'unsorted' && !n) return '';
-        return '<button class="tile' + (x[0] === 'nina' ? ' nina' : '') + (n ? '' : ' zero') + '" data-qsec="' + x[0] + '"><span class="ti">' + x[2] + '</span><span class="qtn">' + n + '</span><span class="qtl">' + x[1] + '</span></button>'; }).join('');
-      return h + '</div><div class="btns" style="margin:4px 0 12px"><button class="btn sm ghost" data-act="run">⚡ Re-check triggers now</button></div>';
+    if (S.mode === 'fixture') {
+      if (!fake) fake = window.TTG_FAKE_API.create(window.TTG_V4_FIXTURES, BC);
+      return fake(action, data);
     }
-    var S0 = SECS.filter(function (x) { return x[0] === sec; })[0], inSec = Q.filter(function (q) { return secOf(q) === sec; });
-    h = '<button class="back" data-qsec="">‹ All sections</button><h1>' + S0[2] + ' ' + S0[1] + '</h1>';
-    if (sec === 'nina') {
-      var U = unstaffed(), other = inSec.filter(function (q) { return q.status === 'draft' && q.trigger !== 'T12'; });
-      h += '<p class="sub">Nina\u2019s items. View only. Days count from when the case first went unstaffed.</p>';
-      h += U.length ? '<details class="card grp" open><summary><span class="gn">' + U.length + '</span><span class="grow"><b>Unstaffed roles</b><small>Longest open first</small></span><span class="pill p-brand">T12</span></summary>' +
-        U.map(function (u) { return '<a class="row uns" href="#/case/' + esc(u.case_id) + '"><div class="grow"><b>' + esc(u.student) + '</b><small>Needs ' + esc(u.role) + (u.departed ? ' \u00b7 ' + esc(u.departed) + ' left' : '') + '</small></div><span class="pill p-' + (u.days >= 14 ? 'red' : u.days >= 7 ? 'yellow' : 'unknown') + '">' + daysTxt(u.days) + '</span></a>'; }).join('') + '</details>' : '<div class="card empty">No unstaffed students.</div>';
-      if (other.length) h += '<details class="card grp"><summary><span class="gn">' + other.length + '</span><span class="grow"><b>Other Nina items</b><small>tap to see list</small></span></summary>' +
-        other.map(function (q) { return '<a class="row" href="#/case/' + esc(q.case_id) + '"><div class="grow"><b>' + esc(q.student || q.subject) + '</b><small>' + esc(q.trigger) + '</small></div></a>'; }).join('') + '</details>';
+    if (!KEY) return Promise.reject(new Error('unauthorized'));
+    var u = apiUrl(); if (!allowedApi(u)) return Promise.reject(new Error('API address is missing or not allowed'));
+    return fetch(u, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: KEY, action: action, data: data || {} }),
+      redirect: 'follow', referrerPolicy: 'no-referrer', cache: 'no-store', credentials: 'omit' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (!j || j.ok !== true) throw new Error((j && j.error) || 'request failed'); return j; });
+  }
+  function reqId() {
+    var a = new Uint8Array(12); try { crypto.getRandomValues(a); } catch (e) { for (var i = 0; i < a.length; i++) a[i] = Math.floor(Math.random() * 256); }
+    return 'r' + Array.prototype.map.call(a, function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+  }
+
+  /* ---------- helpers ---------- */
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+  function toast(msg) { var t = $('#toast'); if (!t) return; t.hidden = false; t.textContent = msg; clearTimeout(toast._t); toast._t = setTimeout(function () { t.hidden = true; }, 3200); }
+  function banner() { return S.mode === 'fixture' ? '<div class="sample">Fictional sample data · changes stay in this tab only, nothing is saved</div>' : ''; }
+  function head(title, backHref, backLabel) { return '<div class="back"><a href="' + esc(backHref || '#/') + '">' + esc(backLabel || 'Home') + '</a><h1>' + esc(title) + '</h1></div>' + banner(); }
+  function card(inner, cls) { return '<div class="card' + (cls ? ' ' + cls : '') + '">' + inner + '</div>'; }
+  function section(title, body) { return card('<b>' + esc(title) + '</b><div class="muted" style="margin-top:6px">' + body + '</div>'); }
+  function pill(t, cls) { return '<span class="pill' + (cls ? ' ' + cls : '') + '">' + esc(t) + '</span>'; }
+  function warn(t) { return '<div class="banner warn">' + t + '</div>'; }
+  function info(t) { return '<div class="banner">' + t + '</div>'; }
+  function nof(v) { return v ? esc(v) : '<span class="muted">Not on file</span>'; }
+  function kv(rows) { return '<dl class="kv">' + rows.map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd>' + (r[2] ? r[1] : nof(r[1])) + '</dd>'; }).join('') + '</dl>'; }
+  function ext(u, label) { u = M.safeUrl(u); return u ? '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + esc(label || 'Open link') + '</a>' : ''; }
+  function opt(v, label, sel) { return '<option value="' + esc(v) + '"' + (sel ? ' selected' : '') + '>' + esc(label) + '</option>'; }
+  function today() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  function daysAgo(n) { var d = new Date(Date.now() - n * 864e5); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  function healthPills(h) {
+    return ['relationship', 'service', 'clinical', 'billing'].map(function (k) { var c = h && h[k]; return c === 'red' ? pill(k, 'bad') : c === 'yellow' ? pill(k, 'warn') : ''; }).join(' ');
+  }
+  var STATE = { aligned: ['Aligned', ''], mismatch: ['Mismatch', 'bad'], no_note: ['No note', 'warn'], ambiguous: ['Ambiguous', 'warn'], duplicate: ['Duplicate', 'bad'], needs_review: ['Needs review', 'warn'] };
+
+  /* ---------- lazy sources ---------- */
+  function v4Missing() { return S.mode === 'live' && S.P && !S.P.v4; }
+  function ensureClinical() {
+    if (S.clinical || S.loading.clinical) return;
+    if (v4Missing()) { S.clinical = M.normalizeClinical({ available: false, reason: 'The private API has not been updated with the clinical-notes source yet (v4 backend not deployed).' }); return; }
+    S.loading.clinical = true;
+    api('clinicalNotes', {}).then(function (r) { S.clinical = M.normalizeClinical(r.clinical, S.P); })
+      .catch(function (e) { S.clinical = M.normalizeClinical({ available: false, reason: 'Could not load clinical notes: ' + e.message }); })
+      .then(function () { S.loading.clinical = false; render(); });
+  }
+  function ensureBilling() {
+    if (S.billing || S.loading.billing) return;
+    if (v4Missing()) { S.billing = { available: false, reason: 'The private API has not been updated with billing review yet (v4 backend not deployed).', batches: [] }; return; }
+    S.loading.billing = true;
+    api('billingReview', {}).then(function (r) { S.billing = r.billing; })
+      .catch(function (e) { S.billing = { available: false, reason: 'Could not load billing: ' + e.message, batches: [] }; })
+      .then(function () { S.loading.billing = false; render(); });
+  }
+  function loadingCard(what) { return card('<span class="muted">Loading ' + esc(what) + '…</span>'); }
+
+  /* ---------- routes ---------- */
+  function route() {
+    var h = (location.hash || '').replace(/^#\/?/, '').split('/').filter(Boolean).map(function (x) { try { return decodeURIComponent(x); } catch (e) { return ''; } });
+    S.route = h[0] || 'home'; S.params = h.slice(1);
+    if (S.route !== 'reports') { /* keep draft while moving around */ }
+    render();
+  }
+  var ROUTES = {};
+  function render() {
+    if (!S.P) return;
+    var fn = ROUTES[S.route] || ROUTES.home;
+    view.innerHTML = fn();
+    try { window.scrollTo && S._lastRoute !== location.hash && window.scrollTo(0, 0); } catch (e) {}
+    S._lastRoute = location.hash;
+  }
+
+  /* ---------- HOME ---------- */
+  var ICONS = {
+    person: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 19c1.5-3.5 4-5 7-5s5.5 1.5 7 5"/></svg>',
+    note: '<svg viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>',
+    calendar: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+    checklist: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="6" height="6" rx="1"/><path d="M4.5 7l1.5 1.5L9 5.5M12 7h8M3 14h6v6H3zM12 17h8"/></svg>',
+    bars: '<svg viewBox="0 0 24 24"><path d="M4 20h16"/><rect x="5" y="11" width="3" height="7"/><rect x="10.5" y="7" width="3" height="11"/><rect x="16" y="4" width="3" height="14"/></svg>',
+    envelope: '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 7l9 7 9-7"/></svg>'
+  };
+  ROUTES.home = function () {
+    ensureBilling();
+    var n = M.reviewItems(S.P, S.billing).length;
+    var tiles = [['students', 'Students\n& Cases', ICONS.person], ['notes', 'Clinical\nNotes', ICONS.note], ['providers', 'Providers\n& Schedules', ICONS.calendar],
+      ['billing', 'Billing\nReview', ICONS.checklist], ['reports', 'Reports\n& Updates', ICONS.bars], ['email', 'Email &\nOpen Items', ICONS.envelope]];
+    return '<div class="brand-row"><img src="icons/icon-192.png" alt=""><div><b>TTG Ops</b><small>Oversight workspace</small></div></div>' + banner() +
+      '<form data-submit="home-search"><input class="search" id="homeQ" name="q" autocomplete="off" placeholder="Search students, providers, notes, items…" aria-label="Search"></form>' +
+      '<a class="card review-link" href="#/review"><span>Needs your review</span><span class="badge">' + n + '</span></a>' +
+      '<div class="tiles">' + tiles.map(function (t) { return '<a class="tile" href="#/' + t[0] + '"><span class="ico">' + t[2] + '</span><b>' + esc(t[1]) + '</b></a>'; }).join('') + '</div>' +
+      '<p class="muted" style="margin-top:16px"><a href="#/settings">Settings &amp; data sources</a></p>';
+  };
+  ROUTES.review = function () {
+    var items = M.reviewItems(S.P, S.billing), h = head('Needs your review');
+    if (!S.billing) ensureBilling();
+    if (!items.length) h += '<div class="list-empty">Nothing waiting for you.</div>';
+    items.forEach(function (x) { h += '<a class="card row" href="' + esc(x.href) + '"><div class="grow"><b>' + esc(x.title) + '</b><small>' + esc(x.kind + (x.sub ? ' · ' + x.sub : '')) + '</small></div><span class="chev"></span></a>'; });
+    return h;
+  };
+  ROUTES.search = function () {
+    if (!S.clinical) ensureClinical();
+    var hits = M.searchAll(S.q, S.P, S.clinical), h = head('Search');
+    h += '<form data-submit="home-search"><input class="search" id="homeQ" value="' + esc(S.q) + '" autocomplete="off" aria-label="Search"></form>';
+    if (!hits.length) h += '<div class="list-empty">No matches.</div>';
+    hits.forEach(function (x) { h += '<a class="card row" href="' + esc(x.href) + '"><div class="grow"><b>' + esc(x.title) + '</b><small>' + esc(x.type + (x.sub ? ' · ' + x.sub : '')) + '</small></div><span class="chev"></span></a>'; });
+    return h;
+  };
+
+  /* ---------- STUDENTS ---------- */
+  ROUTES.students = function () {
+    var q = S.stuQ.toLowerCase(), list = S.P.students.filter(function (s) { return !q || (s.name + ' ' + s.services.join(' ')).toLowerCase().indexOf(q) >= 0; });
+    var h = head('Students & Cases');
+    if (S.P.ambiguous.length) h += warn('<b>Possible duplicate records:</b> ' + S.P.ambiguous.map(function (s) { return esc(s.name) + ' (' + esc(s.id) + ')'; }).join(', ') + '. Shown separately, never merged.');
+    if (S.P.sync && S.P.sync.stale) h += warn('Roster and Case Board are out of sync' + (S.P.sync.roster_ok ? '' : ' (roster unreadable)') + '. See Settings.');
+    h += '<input class="search" data-change="stu-filter" value="' + esc(S.stuQ) + '" placeholder="Filter students" aria-label="Filter students" style="margin-bottom:12px">';
+    if (!list.length) h += '<div class="list-empty">' + (S.P.students.length ? 'No students match.' : 'No students on file.') + '</div>';
+    list.forEach(function (s) {
+      var ini = s.name.split(/\s+/).map(function (p) { return p[0] || ''; }).join('').slice(0, 2).toUpperCase();
+      h += '<a class="card row" href="#/student/' + encodeURIComponent(s.id) + '"><div class="avatar">' + esc(ini) + '</div><div class="grow"><b>' + esc(s.name) + '</b><small>' +
+        esc(s.services.join(' · ') || s.setting || 'No services on file') + (s.openRoles.length ? ' · open: ' + esc(s.openRoles.join(', ')) : '') + '</small></div>' + healthPills(s.health) + '<span class="chev"></span></a>';
+    });
+    return h;
+  };
+  ROUTES.student = function () {
+    var s = M.student(S.P, S.params[0]); if (!s) return head('Student', '#/students', 'Students') + '<div class="list-empty">Student not found.</div>';
+    if (!S.clinical) ensureClinical();
+    var h = head(s.name, '#/students', 'Students');
+    if (s.duplicateId || s.sameNameIds.length) h += warn('Another record has the same name (' + esc(s.sameNameIds.join(', ')) + '). Records are kept separate.');
+    h += card('<div class="row"><div class="grow"><b>' + esc(s.setting || 'Setting not on file') + '</b><small>' + esc(s.source) + ' · ID ' + esc(s.id) + '</small></div>' + healthPills(s.health) + '</div>' + (s.why ? '<p class="muted" style="margin:6px 0 0">' + esc(s.why) + '</p>' : '') +
+      (s.fieldMap && M.val(s.fieldMap['Roster notes (live issues)']) ? '<p class="note-body" style="margin:6px 0 0">' + esc(M.val(s.fieldMap['Roster notes (live issues)'])) + '</p>' : ''));
+    var c = s.chart;
+    h += section('Profile', c ? kv([['Age', c.age != null ? String(c.age) : ''], ['School', c.school], ['Attends school', c.attends], ['Service location', c.location], ['Weekly schedule', c.schedule], ['Hours / week', c.hours]]) + '<div class="src">Source: student chart</div>' : 'Not in the student chart.');
+    var team = s.providers.map(function (p) { return (p.key ? '<a href="#/provider/' + esc(p.key) + '">' + esc(p.name) + '</a>' : esc(p.name)) + ' · ' + esc(p.role); });
+    s.bcba.forEach(function (b) { team.push((b.key ? '<a href="#/provider/' + esc(b.key) + '">' + esc(b.name) + '</a>' : esc(b.name)) + ' · BCBA'); });
+    h += section('Team', (team.length ? team.join('<br>') : 'No providers on file') +
+      (s.related.length ? '<br><span class="muted">Related services: ' + esc(s.related.join('; ')) + '</span>' : '') +
+      (s.openRoles.length ? '<br>' + pill('Open: ' + s.openRoles.join(', '), 'warn') : '') +
+      (s.departed.length ? '<br><span class="muted">Left the case: ' + esc(s.departed.join(', ')) + '</span>' : '') +
+      (s.family.length ? '<br><span class="muted">Family contact: ' + esc(s.family.join('; ')) + '</span>' : ''));
+    h += section('Services & schedule', s.assignments.length ? s.assignments.map(function (a) {
+      return '<b>' + esc(a.role || 'Service') + '</b> · ' + (a.open ? pill('Unstaffed', 'warn') : esc(a.provider)) + '<br><span class="muted">' + nof(a.schedule) + (a.mandate ? ' · mandate ' + esc(a.mandate) + ' h/wk' : '') + (a.status ? ' · ' + esc(a.status) : '') + '</span>';
+    }).join('<br>') + '<div class="src">Source: Provider Hub assignments</div>' : 'No assignments on file.');
+    var b = s.bank || {};
+    h += section('Hours & key dates', kv([['Hour bank', b.total != null ? b.total + ' h' + (b.pct != null ? ' · ' + b.pct + '% left' : '') : ''], ['Auth ends', b.expiry]].concat(
+      s.fields.filter(function (f) { return /due|review|Last contact|Sched|Delivered|Sessions logged|Notes submitted|Invoice|Billing gap/.test(f.k); }).map(function (f) { return [f.k, f.v]; }))) + '<div class="src">Source: Case Board</div>');
+    var it = s.intake, en = s.ensora;
+    h += section('Intake & documents', (it ? kv([['Status', it.status], ['Received', it.received], ['Missing', it.missing]]) + (it.links.length ? it.links.map(function (u, i) { return ext(u, 'Document folder ' + (i + 1)); }).join(' · ') : '') : 'No intake record.') +
+      '<div style="margin-top:8px">' + (en ? kv([['Ensora', en.use], ['On file', en.data], ['Last capture', en.last], ['Missing', en.missing]]) + (en.sourceUrl ? ext(en.sourceUrl, 'Ensora source') : '') : 'No Ensora record.') + '</div>');
+    var notes = S.clinical && S.clinical.available ? M.filterNotes(S.clinical.notes, { caseId: s.id }) : null;
+    h += section('Clinical notes', S.loading.clinical ? 'Loading…' : !S.clinical ? '' : !S.clinical.available ? esc(S.clinical.reason) :
+      notes.length ? notes.length + ' note' + (notes.length === 1 ? '' : 's') + ', latest ' + esc(notes[0].date) + ' · <a href="#/notes/' + encodeURIComponent(s.id) + '">Open notes</a>' : 'No notes on file (this does not mean sessions were missed).');
+    var items = S.P.queue.filter(function (x) { return x.case_id === s.id && x.status === 'draft'; });
+    var reps = S.P.reports.filter(function (r) { return r.scope === s.name; });
+    h += section('Open items & reports', (items.length ? '<a href="#/email/' + encodeURIComponent(s.id) + '">' + items.length + ' open item' + (items.length === 1 ? '' : 's') + '</a>' : 'No open items') + ' · ' +
+      (reps.length ? reps.slice(0, 3).map(function (r) { return '<a href="#/report/' + encodeURIComponent(r.id) + '">' + esc(r.title) + '</a> ' + pill(r.status, r.status === 'draft' ? 'warn' : ''); }).join('<br>') : 'No saved reports'));
+    h += card('<b>Case log</b><div class="muted">Roni\u2019s case notes and edits (not clinical notes)</div>' +
+      (s.caseLog.length ? s.caseLog.slice(0, 8).map(function (n) { return '<div style="margin-top:8px"><span class="src">' + esc(n.ts.slice(0, 10)) + ' · ' + esc(n.type) + '</span><div class="note-body" style="margin:2px 0 0">' + esc(n.text) + '</div></div>'; }).join('') : '<p class="muted">No entries yet.</p>') +
+      '<textarea id="caseNote" class="field" rows="2" placeholder="Add a case note"></textarea><button class="btn secondary" type="button" data-act="case-note" data-id="' + esc(s.id) + '">Save note</button>');
+    h += '<details class="card"><summary><b>Edit case fields</b></summary><div class="selects"><label for="editField">Field</label><select id="editField">' +
+      s.fields.map(function (f) { return opt(f.k, f.k + (f.v ? ' (' + f.v.slice(0, 30) + ')' : ''), false); }).join('') + '</select><label for="editValue">New value</label><input id="editValue" class="field" autocomplete="off"></div>' +
+      '<button class="btn secondary" type="button" data-act="case-edit" data-id="' + esc(s.id) + '" style="margin-top:10px">Save field</button><p class="muted">Changes the Case Board only; the roster is never written.</p></details>';
+    return h;
+  };
+
+  /* ---------- CLINICAL NOTES ---------- */
+  ROUTES.notes = function () {
+    if (S.params[0] !== undefined && S.noteF._route !== S.params[0]) { S.noteF = { caseId: S.params[0], _route: S.params[0] }; }
+    ensureClinical();
+    var h = head('Clinical Notes'), C = S.clinical, f = S.noteF;
+    if (S.loading.clinical || !C) return h + loadingCard('clinical notes');
+    if (!C.available) return h + warn('<b>Clinical notes are not connected.</b> ' + esc(C.reason) + '<br>Nothing is shown rather than guessed. A missing note is never treated as a missed session.');
+    var provs = M.noteProviders(C.notes);
+    h += '<div class="selects filters"><label for="nfStudent">Student</label><select id="nfStudent" data-change="note-filter" data-k="caseId">' + opt('', 'All students', !f.caseId) +
+      S.P.students.map(function (s) { return opt(s.id, s.name, f.caseId === s.id); }).join('') + '</select>' +
+      '<label for="nfProv">Provider</label><select id="nfProv" data-change="note-filter" data-k="providerKey">' + opt('', 'All providers', !f.providerKey) + provs.map(function (p) { return opt(p.key, p.name, f.providerKey === p.key); }).join('') + '</select>' +
+      '<div class="two"><div><label for="nfFrom">From</label><input type="date" id="nfFrom" data-change="note-filter" data-k="from" value="' + esc(f.from || '') + '"></div>' +
+      '<div><label for="nfTo">To</label><input type="date" id="nfTo" data-change="note-filter" data-k="to" value="' + esc(f.to || '') + '"></div></div>' +
+      '<label for="nfQ">Words in note</label><input id="nfQ" class="field" data-change="note-filter" data-k="q" value="' + esc(f.q || '') + '" autocomplete="off"></div>';
+    var list = M.filterNotes(C.notes, f);
+    var stu = f.caseId ? M.student(S.P, f.caseId) : null;
+    if (stu) h += card('<div class="muted">Context</div><b>' + esc(stu.name) + '</b><div class="muted">' + esc(stu.services.join(' · ') || 'No services on file') + '</div><div class="muted">Treatment goals are not in the connected sources yet.</div><a href="#/student/' + encodeURIComponent(stu.id) + '">Open case</a>');
+    h += '<p class="muted">' + list.length + ' of ' + C.notes.length + ' notes' + (C.unmatched ? ' · ' + C.unmatched + ' source row(s) not linked to a student (not shown)' : '') + '</p>';
+    if (!list.length) h += '<div class="list-empty">No notes for this filter. That does not mean sessions were missed.</div>';
+    list.slice(0, 200).forEach(function (n) {
+      h += '<a class="card" href="#/note/' + encodeURIComponent(n.id) + '"><div class="row"><b>' + esc(n.date) + '</b>' + (f.caseId ? '' : '<span class="muted">' + esc(n.student) + '</span>') +
+        (n.signed ? '' : pill('Unsigned', 'warn')) + '</div><div class="muted">' + esc((n.service || 'Service not recorded') + ' · ' + (n.provider || 'Provider not recorded') + (n.duration_min ? ' · ' + n.duration_min + ' min' : '')) + '</div>' +
+        '<div class="note-body clamp">' + esc(n.text) + '</div><div class="src">Source: ' + esc(n.source) + '</div></a>';
+    });
+    var ses = M.filterNotes(C.sessions, { caseId: f.caseId, from: f.from, to: f.to }).filter(function (s) { return !f.providerKey || M.findProvider(S.P.providers, s.provider) && M.findProvider(S.P.providers, s.provider).key === f.providerKey; });
+    if (ses.length) h += warn('<b>Sessions without a note:</b> ' + ses.map(function (s) { return esc(s.date + ' · ' + s.student + ' · ' + (s.service || '') + ' ' + s.provider); }).join('; ') + '. A missing note does not mean a missed session.');
+    return h;
+  };
+  ROUTES.note = function () {
+    ensureClinical();
+    if (!S.clinical) return head('Note', '#/notes', 'Notes') + loadingCard('note');
+    var n = (S.clinical.notes || []).filter(function (x) { return x.id === S.params[0]; })[0];
+    if (!n) return head('Note', '#/notes', 'Notes') + '<div class="list-empty">Note not found.</div>';
+    return head(n.date + ' · ' + (n.service || 'Note'), '#/notes', 'Notes') + card('<b><a href="#/student/' + encodeURIComponent(n.case_id) + '">' + esc(n.student) + '</a></b>' +
+      kv([['Provider', n.provider], ['Service', n.service], ['Time', n.time], ['Duration', n.duration_min ? n.duration_min + ' min' : ''], ['Location', n.location], ['Signature', n.signed || 'Not signed'], ['Created', n.created]]) +
+      '<div class="note-body">' + esc(n.text) + '</div><div class="src">Source: ' + esc(n.source) + ' · ' + esc(n.id) + '</div>');
+  };
+
+  /* ---------- PROVIDERS & SCHEDULES ---------- */
+  ROUTES.providers = function () {
+    var tab = S.params[0] === 'schedules' ? 'schedules' : 'providers', h = head('Providers & Schedules');
+    if (S.P.gaps.length) h += card(pill(S.P.gaps.length + ' coverage gap' + (S.P.gaps.length === 1 ? '' : 's'), 'warn') + '<div style="margin-top:8px">' + S.P.gaps.map(function (g) {
+      return '<a href="#/student/' + encodeURIComponent(g.case_id) + '">' + esc(g.student) + '</a> · ' + esc(g.role) + (g.days != null ? ' · unstaffed ' + esc(g.days) + ' day' + (g.days === 1 ? '' : 's') : '') + (g.departed ? ' <span class="muted">(left: ' + esc(g.departed) + ')</span>' : '');
+    }).join('<br>') + '</div>');
+    h += '<div class="chip-row"><a class="chip' + (tab === 'providers' ? ' on' : '') + '" href="#/providers">Providers</a><a class="chip' + (tab === 'schedules' ? ' on' : '') + '" href="#/providers/schedules">Schedules by student</a></div>';
+    if (tab === 'providers') {
+      if (!S.P.providers.length) h += warn('No providers in the connected sources.');
+      S.P.providers.forEach(function (p) {
+        h += '<a class="card row" href="#/provider/' + esc(p.key) + '"><div class="grow"><b>' + esc(p.name) + '</b><small>' + esc(p.roles.join(' · ') || 'Role not on file') + ' · ' + p.cases.length + ' case' + (p.cases.length === 1 ? '' : 's') + '</small></div><span class="chev"></span></a>';
+      });
+    } else {
+      S.P.students.forEach(function (s) {
+        var rows = S.P.schedules.filter(function (r) { return r.case_id === s.id; });
+        h += card('<b><a href="#/student/' + encodeURIComponent(s.id) + '">' + esc(s.name) + '</a></b>' + (rows.length ? rows.map(function (r) {
+          return '<div style="margin-top:6px">' + esc(r.role) + ' · ' + (r.open ? pill('Unstaffed', 'warn') : r.providerKey ? '<a href="#/provider/' + esc(r.providerKey) + '">' + esc(r.provider) + '</a>' : esc(r.provider)) + '<br><span class="muted">' + (r.schedule ? esc(r.schedule) : 'No schedule on file') + (r.mandate ? ' · mandate ' + esc(r.mandate) + ' h/wk' : '') + '</span></div>';
+        }).join('') : '<div class="muted">No assignments on file' + (s.chart && s.chart.schedule ? '; chart schedule: ' + esc(s.chart.schedule) : '') + '</div>'));
+      });
+      h += '<p class="src">Source: Provider Hub assignments and student chart</p>';
+    }
+    return h;
+  };
+  ROUTES.provider = function () {
+    var p = S.P.providers.filter(function (x) { return x.key === S.params[0]; })[0];
+    if (!p) return head('Provider', '#/providers', 'Providers') + '<div class="list-empty">Provider not found.</div>';
+    if (!S.clinical) ensureClinical();
+    var h = head(p.name, '#/providers', 'Providers');
+    h += card(kv([['Roles', p.roles.join(', ')], ['Phone', p.phone], ['Email', p.email], ['Provider ID', p.provider_id]]) + '<div class="src">Sources: ' + esc(p.sources.join(', ')) + '</div>');
+    h += '<div class="sec">Cases & schedules</div>';
+    p.cases.forEach(function (c) { h += card('<b><a href="#/student/' + encodeURIComponent(c.case_id) + '">' + esc(c.student) + '</a></b> · ' + esc(c.role) + '<div class="muted">' + (c.schedule ? esc(c.schedule) : 'No schedule on file') + (c.mandate ? ' · mandate ' + esc(c.mandate) + ' h/wk' : '') + (c.status ? ' · ' + esc(c.status) : '') + '</div>'); });
+    if (S.clinical && S.clinical.available) {
+      var n = S.clinical.notes.filter(function (x) { return x.providerKey === p.key; });
+      h += '<p><a href="#/notes" data-act="notes-by-provider" data-key="' + esc(p.key) + '">' + n.length + ' clinical note' + (n.length === 1 ? '' : 's') + ' by this provider</a></p>';
+    }
+    return h;
+  };
+
+  /* ---------- BILLING REVIEW ---------- */
+  function billState(b) { var st = b.audit.status; return pill(st, st === 'Signed off' ? '' : st === 'Needs review' ? 'warn' : 'bad'); }
+  ROUTES.billing = function () {
+    ensureBilling();
+    var h = head('Billing Review', S.params[0] ? '#/billing' : '#/', S.params[0] ? 'Billing' : 'Home'), B = S.billing;
+    if (S.loading.billing || !B) return h + loadingCard('billing');
+    if (!B.available) return h + warn('<b>Incoming billing is not connected.</b> ' + esc(B.reason) + '<br>Billing is only reviewed against real billed lines and clinical notes; nothing is approved from counts.');
+    var persisted = S.mode === 'live' && B.persisted !== false;
+    if (!S.params[0]) {
+      h += '<p class="muted">Compare each billed line with its clinical note, then sign off. No invoices or payments are handled here.</p>';
+      if (!B.batches.length) h += '<div class="list-empty">No incoming billing.</div>';
+      B.batches.forEach(function (b) {
+        var bad = b.review.filter(function (r) { return r.state !== 'aligned'; }).length;
+        h += '<a class="card row" href="#/billing/' + encodeURIComponent(b.id) + '"><div class="grow"><b>' + esc(b.id) + '</b><small>' + b.lines.length + ' line' + (b.lines.length === 1 ? '' : 's') + (bad ? ' · ' + bad + ' need attention' : '') + '</small></div>' + billState(b) + '<span class="chev"></span></a>';
+      });
       return h;
     }
-    var list = inSec.filter(function (q) { return inTab(q, S.qtab); });
-    h += '<div class="chips">' + tabs.map(function (t) { var n = inSec.filter(function (q) { return inTab(q, t[0]); }).length; return '<button class="chip' + (S.qtab === t[0] ? ' on' : '') + '" data-qtab="' + t[0] + '">' + t[1] + ' (' + n + ')</button>'; }).join('') + '</div>';
-    h += list.length ? list.map(function (q) {
-      var st = q.status === 'draft' ? pill('yellow', 'draft') : /^approved/.test(q.status) ? pill('green', q.status) : pill('unknown', q.status);
-      return '<div class="card qitem" data-q="' + esc(q.id) + '"><div class="meta"><span class="pill p-brand">' + esc(q.trigger) + '</span>' + st + (q.student ? '<a class="small" href="#/case/' + esc(q.case_id) + '">' + esc(q.student) + '</a>' : '') + '</div>' +
-        '<b>To: ' + esc(q.recipient) + '</b> <span class="small">' + esc(q.channel) + (q.recipient_contact ? ' · ' + esc(q.recipient_contact) : '') + '</span><p>' + esc(q.message) + '</p>' + (q.note ? '<div class="small">' + esc(q.note) + '</div>' : '') +
-        '<div class="btns">' + (q.status === 'draft' ? '<button class="btn sm" data-qop="approve">Approve</button><button class="btn sm ghost" data-qop="edit">Edit</button><button class="btn sm warn" data-qop="dismiss">Dismiss</button>' : '<button class="btn sm ghost" data-qop="reopen">Reopen</button>') + '</div></div>';
-    }).join('') : '<div class="card empty">Nothing here.</div>';
-    return h;
-  }
-  /* ---------- Triggers ---------- */
-  function triggers() {
-    var h = '<h1>Triggers</h1><p class="sub">The 14 rules from the Triggers tab, evaluated live against the board. Thresholds come from Cadence.</p>';
-    h += (S.data.triggers || []).map(function (t) {
-      return '<div class="card tg"><span class="id">' + esc(t.id) + '</span><div class="grow" style="flex:1"><b>' + esc(t.name) + '</b> ' + (t.fired ? pill('red', t.fired + ' firing') : t.missing ? pill('unknown', 'needs data') : pill('green', 'clear')) +
-        '<div class="small">' + esc(t.side) + ' · ' + esc(t.cadence) + ' · ' + esc(t.who) + ' · ' + esc(t.channel) + '</div>' + (t.missing ? '<div class="small" style="color:var(--yel)">Missing: ' + esc(t.missing) + '</div>' : '') + '</div></div>';
-    }).join('');
-    return h + '<div class="btns"><button class="btn" data-act="run">Create drafts for everything firing</button></div>';
-  }
-  /* ---------- Settings ---------- */
-  function settings() {
-    var st = S.data.settings, keys = Object.keys(st).filter(function (k) { return !/^last_/.test(k); });
-    var h = '<h1>Cadence</h1><p class="sub">How often each stakeholder is contacted and when alerts fire. Saved to the Settings tab.</p><div class="card">';
-    h += keys.map(function (k) { var wd = /weekday/.test(k); return '<label class="set"><span>' + esc(st[k].label || k) + '</span>' + (wd ? '<select data-set="' + k + '">' + ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map(function (d) { return '<option' + (String(st[k].value) === d ? ' selected' : '') + '>' + d + '</option>'; }).join('') + '</select>' : '<input type="number" min="0" data-set="' + k + '" value="' + esc(st[k].value) + '">') + '</label>'; }).join('');
-    h += '</div><div class="small">Last Josh update: ' + esc(st.last_josh_update.value || 'never') + ' · Last Nina sync: ' + esc(st.last_nina_sync.value || 'never') + ' (set when you approve T1/T2)</div><div class="btns"><button class="btn" data-act="saveSet">Save cadence</button></div>';
-    h += '<h2>Privacy</h2><div class="card small">Only your admin link opens this app. Case numbers, SSNs and TINs are never sent to the app. Case data stays in memory on this device and is not saved offline.<div class="btns"><button class="btn sm warn" data-act="forget">Sign out on this device</button></div></div>';
-    return h;
-  }
-  /* ---------- Reports (drafts only) ---------- */
-  var RKINDS = [['student', 'Student status'], ['provider', 'Provider hours and billing'], ['intake', 'Intake papers'], ['month', 'Monthly case report']];
-  function stPill(st) { return /^received$/i.test(st) ? pill('green', st) : /^(received, incomplete|partial)/i.test(st) ? pill('yellow', st) : /^not received/i.test(st) ? pill('red', st) : pill('unknown', st || 'unknown'); }
-  function links(L) { return (L || []).map(function (u, i) { return '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">Source ' + (i + 1) + '</a>'; }).join(' · '); }
-  function intakeCard(I) {
-    if (!I) return '<div class="small">No intake record.</div>';
-    return '<div class="meta">' + stPill(I.status) + '</div><dl class="kv">' + (I.who ? '<dt>Team</dt><dd>' + esc(I.who) + '</dd>' : '') + (I.received ? '<dt>Received</dt><dd>' + esc(I.received) + '</dd>' : '') +
-      (I.missing ? '<dt>Missing</dt><dd>' + esc(I.missing.replace(/^Forms from: /, 'Forms from ')) + '</dd>' : '') + (I.notes ? '<dt>Notes</dt><dd>' + esc(I.notes) + '</dd>' : '') + '</dl>' + (I.links && I.links.length ? '<div class="small" style="margin-top:6px">' + links(I.links) + '</div>' : '');
-  }
-  function provNames() {
-    var m = {}; (S.data.intake || []).forEach(function (x) { if (x.kind === 'Provider') m[x.name] = 1; });
-    S.data.cases.forEach(function (c) { c.team.forEach(function (t) { if (t.role !== 'Parent' && t.role !== 'Related service' && !/^tbd$/i.test(t.name)) m[t.name] = 1; }); });
-    return Object.keys(m).sort();
-  }
-  function reports() {
-    var k = S.rkind || 'student', R = S.data.reports || [], I = S.data.intake || [], mo = S.rmonth || (S.data.today || '').slice(0, 7);
-    var h = '<h1>Reports</h1><p class="sub">Drafts only. Nothing is sent.</p>';
-    h += '<div class="chips" style="flex-wrap:wrap">' + RKINDS.map(function (x) { return '<button class="chip' + (k === x[0] ? ' on' : '') + '" data-rkind="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div><div class="card">';
-    if (k === 'student') h += '<label class="small">Student</label><select id="rCase">' + S.data.cases.slice().sort(function (a, b) { return a.student.localeCompare(b.student); }).map(function (c) { return '<option value="' + esc(c.id) + '"' + (S.rcase === c.id ? ' selected' : '') + '>' + esc(c.student) + '</option>'; }).join('') + '</select>';
-    if (k === 'provider') h += '<label class="small">Provider</label><select id="rProv">' + provNames().map(function (n) { return '<option' + (S.rprov === n ? ' selected' : '') + '>' + esc(n) + '</option>'; }).join('') + '</select>';
-    if (k === 'provider' || k === 'month') h += '<label class="small">Month</label><input type="month" id="rMonth" value="' + esc(mo) + '">';
-    h += '<div class="btns"><button class="btn" data-act="mkrep">Make draft</button></div></div>';
-    var cnt = function (kind, re) { return I.filter(function (x) { return x.kind === kind && re.test(x.status); }).length; };
-    if (I.length) h += '<h2>Intake papers</h2><div class="card"><dl class="kv"><dt>Providers</dt><dd>' + cnt('Provider', /^received/i) + ' received · ' + cnt('Provider', /^partial/i) + ' partial · ' + cnt('Provider', /^not received/i) + ' none</dd><dt>Students</dt><dd>' + cnt('Student', /^received/i) + ' complete · ' + cnt('Student', /^partial/i) + ' partial · ' + cnt('Student', /^not received/i) + ' none</dd></dl>' +
-      '<details style="margin-top:8px"><summary class="small">Show table</summary>' + ['Student', 'Provider', 'Other'].map(function (kind) {
-        var L = I.filter(function (x) { return x.kind === kind; }); if (!L.length) return '';
-        return '<h3 style="margin:12px 0 4px">' + kind + 's</h3>' + L.map(function (x) { return '<div class="row" style="align-items:flex-start"><div class="grow"><b>' + esc(x.name) + '</b> ' + stPill(x.status) + (x.received ? '<small>' + esc(x.received) + '</small>' : '') + (x.missing ? '<small>Missing: ' + esc(x.missing.replace(/^Forms from: /, '')) + '</small>' : '') + (x.links.length ? '<small>' + links(x.links) + '</small>' : '') + '</div></div>'; }).join('');
-      }).join('') + '</details></div>';
-    h += '<h2>Drafts</h2>' + (R.length ? R.map(function (r) {
-      return '<div class="card qitem" data-rid="' + esc(r.id) + '"><div class="meta">' + (r.status === 'draft' ? pill('yellow', 'draft') : pill('green', r.status)) + '<span class="small">' + fmtTs(r.created) + '</span></div><b>' + esc(r.title) + '</b>' +
-        '<div class="btns"><button class="btn sm" data-rop="open">Open</button>' + (r.status === 'draft' ? '<button class="btn sm ghost" data-rop="done">Mark reviewed</button>' : '<button class="btn sm ghost" data-rop="reopen">Back to draft</button>') + '<button class="btn sm warn" data-rop="remove">Remove</button></div></div>';
-    }).join('') : '<div class="card empty">No drafts yet.</div>');
-    return h;
-  }
-  function openReport(r) {
-    openSheet('<div class="hd"><b>' + esc(r.title) + '</b><button class="icon" data-close>✕</button></div><div class="small" style="margin-bottom:8px">Draft · ' + fmtTs(r.created) + '</div><textarea id="rBody" style="min-height:52vh;font-size:13px">' + esc(r.body) + '</textarea>' +
-      '<div class="btns"><button class="btn" id="rCopy">Copy</button><button class="btn ghost" id="rDl">Download</button><button class="btn ghost" id="rSave">Save</button></div>');
-    $('#rCopy').onclick = function () { var t = $('#rBody').value; (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { toast('Copied'); }).catch(function () { $('#rBody').select(); document.execCommand('copy'); toast('Copied'); }); };
-    $('#rDl').onclick = function () { var b = new Blob([$('#rBody').value], { type: 'text/plain' }), a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = r.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') + '.txt'; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500); };
-    $('#rSave').onclick = function () { api('reportAction', { id: r.id, op: 'edit', body: $('#rBody').value }).then(function (d) { S.data.reports = d.reports; toast('Saved'); closeSheet(); render(); }).catch(function (e) { toast(e.message); }); };
-  }
-  function makeReport(data) {
-    toast('Making draft…');
-    return api('makeReport', data).then(function (d) { S.data.reports = d.reports; if (S.route === 'reports') render(); openReport(d.report); }).catch(function (e) { toast(e.message); });
-  }
-  /* ---------- Katya panel ---------- */
-  function openSheet(html) { var s = $('#sheet'); $('.sheet-card', s).innerHTML = html; s.hidden = false; }
-  function closeSheet() { $('#sheet').hidden = true; }
-  function katya(prefill, kind) {
-    var c = S.caseId ? caseBy(S.caseId) : null, R = (S.data.requests || []).slice();
-    var mine = c ? R.filter(function (r) { return r.case_id === c.id; }) : R;
-    var thread = mine.slice(-30).map(function (r) {
-      var st = r.status === 'done' ? pill('green', 'done') : r.status === 'new' ? pill('unknown', 'sent to Katya') : pill('yellow', r.status);
-      return '<div class="msg me">' + (r.student && !c ? '<b>' + esc(r.student) + ':</b> ' : '') + (r.kind && r.kind !== 'free text' ? '<b>' + esc(r.kind) + '</b>\n' : '') + esc(r.text) + '<small>' + fmtTs(r.timestamp) + '</small></div>' +
-        '<div style="text-align:right;margin-top:-4px">' + st + '</div>' + (r.reply ? '<div class="msg k"><b>Katya</b>\n' + esc(r.reply) + '<small>' + fmtTs(r.replied_at) + '</small></div>' : '');
-    }).join('');
-    var ctx = c ? 'Case: ' + c.student + ' (' + c.id + ') · ' + SIDES.map(function (s) { return s[0].toUpperCase() + ':' + c.health[s][0]; }).join(' ') + (c.why ? ' · ' + c.why : '') : (S.route === 'queue' ? 'Context: Approval queue (' + drafts().length + ' drafts)' : 'Context: ' + S.route);
-    openSheet('<div class="hd"><b>💬 Ask Katya</b><button class="icon" data-close>✕</button></div><div class="ctx">' + esc(ctx) + '</div><div class="thread" id="thread">' + (thread || '<div class="empty">No requests yet. Type or dictate with the keyboard mic.</div>') + '</div>' +
-      '<div class="composer"><textarea id="kIn" placeholder="Ask Katya…" enterkeyhint="send">' + esc(prefill || '') + '</textarea><button class="btn" id="kSend">Send</button></div><div class="small" style="margin-top:6px">Goes to the Katya Requests tab. Katya replies there.</div>');
-    var t = $('#thread'); t.scrollTop = t.scrollHeight;
-    $('#kSend').onclick = function () {
-      var txt = $('#kIn').value.trim(); if (!txt) return;
-      $('#kSend').disabled = true;
-      api('addRequest', { text: txt, case_id: c ? c.id : '', kind: kind || 'free text' }).then(function (d) { S.data.requests = d.requests; toast('Sent to Katya'); katya(); }).catch(function (e) { toast(e.message); $('#kSend').disabled = false; });
-    };
-  }
-  function quick(kind) {
-    var c = caseBy(S.caseId); if (!c) return;
-    var t = { 'Draft check-in to parent': 'Please draft a monthly check-in to the parent for ' + c.student + ' (use the T5 script). Draft only; I\u2019ll approve.',
-      'Ask BCBA for update': 'Please draft a note to ' + (c.bcba || 'the BCBA') + ' asking for a programming/progress update on ' + c.student + '. Draft only.',
-      'Summarize this case': 'Please summarize ' + c.student + ': team, hours, last contacts, open issues (' + (c.why || 'none listed') + '), what\u2019s due next.',
-      'Prep Josh update': 'Please prep a short Josh update on ' + c.student + ' (status across relationship/service/clinical/billing and any asks).' }[kind];
-    if (!confirm('Send to Katya?\n\n' + t)) return;
-    api('addRequest', { text: t, case_id: c.id, kind: kind }).then(function (d) { S.data.requests = d.requests; toast('Katya request created'); katya(); }).catch(function (e) { toast(e.message); });
-  }
-  /* ---------- editing ---------- */
-  function editField(k) {
-    var c = caseBy(S.caseId), v = c.fields[k] || '', health = /^Health:/.test(k);
-    openSheet('<div class="hd"><b>' + esc(k) + '</b><button class="icon" data-close>✕</button></div><div class="small" style="margin-bottom:8px">' + esc(c.student) + ' · writes to Case Board</div>' +
-      (health ? '<select id="eIn">' + ['', 'Green', 'Yellow', 'Red', '?'].map(function (x) { return '<option' + (x.toLowerCase() === String(v).toLowerCase() ? ' selected' : '') + ' value="' + x + '">' + (x || '(blank)') + '</option>'; }).join('') + '</select>'
-        : '<textarea id="eIn">' + esc(/^\[(no source|blank|none listed)\]$/i.test(v) ? '' : v) + '</textarea>') + '<div class="btns"><button class="btn" id="eSave">Save</button></div>');
-    $('#eSave').onclick = function () {
-      $('#eSave').disabled = true;
-      api('updateCase', { case_id: c.id, field: k, value: $('#eIn').value }).then(function (d) { replaceCase(d.case); closeSheet(); toast('Saved'); }).catch(function (e) { toast(e.message); $('#eSave').disabled = false; });
-    };
-  }
-  function replaceCase(nc) { if (!nc) return; S.data.cases = S.data.cases.map(function (c) { return c.id === nc.id ? nc : c; }); load(true); }
-  function editQueue(q) {
-    openSheet('<div class="hd"><b>Edit draft · ' + esc(q.trigger) + '</b><button class="icon" data-close>✕</button></div><label class="small">Recipient</label><input type="text" id="qR" value="' + esc(q.recipient) + '"><label class="small">Contact</label><input type="text" id="qC" value="' + esc(q.recipient_contact) + '"><label class="small">Channel</label><input type="text" id="qCh" value="' + esc(q.channel) + '"><label class="small">Message</label><textarea id="qM" style="min-height:160px">' + esc(q.message) + '</textarea>' +
-      '<div class="btns"><button class="btn" id="qAp">Save &amp; approve</button><button class="btn ghost" id="qSv">Save draft</button></div>');
-    var go = function (op) { qop(q.id, op, { recipient: $('#qR').value, recipient_contact: $('#qC').value, channel: $('#qCh').value, message: $('#qM').value }); };
-    $('#qAp').onclick = function () { go('approve'); }; $('#qSv').onclick = function () { go('edit'); };
-  }
-  function qop(id, op, extra) {
-    var d = Object.assign({ id: id, op: op }, extra || {});
-    api('queueAction', d).then(function (r) { S.data.queue = r.queue; closeSheet(); toast(op === 'approve' ? 'Approved – Katya to send' : op === 'dismiss' ? 'Dismissed' : 'Saved'); render(); }).catch(function (e) { toast(e.message); });
-  }
-  function runTriggers() {
-    toast('Checking triggers…');
-    api('runTriggers').then(function (r) { S.data.queue = r.queue; S.data.triggers = r.triggers; toast(r.added ? r.added + ' new draft' + (r.added > 1 ? 's' : '') + ' in queue' : 'No new drafts'); S.qtab = 'draft'; S.qsec = null; location.hash = '#/queue'; render(); }).catch(function (e) { toast(e.message); });
-  }
-  /* ---------- binding ---------- */
-  function bind() {
-    var v = $('#view');
-    v.querySelectorAll('[data-side]').forEach(function (a) { a.onclick = function () { S.filt.side = a.dataset.side; S.filt.color = 'red'; }; });
-    v.querySelectorAll('[data-color]').forEach(function (b) { b.onclick = function () { S.filt.color = b.dataset.color; render(); }; });
-    v.querySelectorAll('[data-side2]').forEach(function (b) { b.onclick = function () { S.filt.side = b.dataset.side2; render(); }; });
-    var q = $('#q'); if (q) q.oninput = function () { S.filt.q = q.value; var p = q.selectionStart; render(); var n = $('#q'); n.focus(); n.setSelectionRange(p, p); };
-    var fb = $('#fb'); if (fb) fb.onchange = function () { S.filt.bcba = fb.value; render(); };
-    var fp = $('#fp'); if (fp) fp.onchange = function () { S.filt.prov = fp.value; render(); };
-    v.querySelectorAll('[data-edit]').forEach(function (e) { e.onclick = function () { editField(e.dataset.edit); }; });
-    v.querySelectorAll('[data-qa]').forEach(function (b) { b.onclick = function () { quick(b.dataset.qa); }; });
-    v.querySelectorAll('[data-qsec]').forEach(function (b) { b.onclick = function () { S.qsec = b.dataset.qsec || null; S.qtab = 'draft'; render(); window.scrollTo(0, 0); }; });
-    v.querySelectorAll('[data-qtab]').forEach(function (b) { b.onclick = function () { S.qtab = b.dataset.qtab; render(); }; });
-    v.querySelectorAll('[data-qop]').forEach(function (b) {
-      b.onclick = function () {
-        var id = b.closest('[data-q]').dataset.q, it = S.data.queue.filter(function (x) { return x.id === id; })[0], op = b.dataset.qop;
-        if (op === 'edit') return editQueue(it);
-        if (op === 'approve' && !confirm('Mark as \u201capproved – Katya to send\u201d? (Nothing is sent by the app.)')) return;
-        qop(id, op);
-      };
+    var b = B.batches.filter(function (x) { return x.id === S.params[0]; })[0];
+    if (!b) return h + '<div class="list-empty">Batch not found.</div>';
+    var signed = !!b.audit.signoff;
+    h += card('<div class="row"><div class="grow"><b>' + esc(b.id) + '</b><small>' + esc(uniqList(b.lines, 'student')) + ' · ' + esc(uniqList(b.lines, 'provider')) + '</small></div>' + billState(b) + '</div>' +
+      '<p class="muted" style="margin:6px 0 0">' + (persisted ? 'Your checks, flags and sign-off are saved to the Billing Audit log.' : 'Preview only: checks, flags and sign-off stay in this tab and are NOT saved.') + '</p>' +
+      (b.audit.prior_signoff ? warn('This batch changed after an earlier sign-off (' + esc(b.audit.prior_signoff.ts) + '). Review again.') : ''));
+    h += '<div class="bill-lines">';
+    b.lines.forEach(function (l, i) {
+      var r = b.review[i] || { state: 'needs_review', reasons: [] }, st = STATE[r.state] || STATE.needs_review, checked = !!b.audit.checks[l.id];
+      h += card('<div class="row"><div class="grow"><b>' + esc(l.date || 'No date') + ' · ' + esc(l.student) + '</b><small>' + esc((l.service || 'No service') + ' · ' + (l.provider || 'No provider') + ' · ' +
+        (l.duration_min != null ? l.duration_min + ' min' : 'no duration') + (l.units != null ? ' · ' + l.units + ' units' : '')) + '</small></div>' + pill(st[0], st[1]) + '</div>' +
+        '<div class="muted">' + r.reasons.map(esc).join('<br>') + '</div>' +
+        (r.note ? '<div class="src">Note: <a href="#/note/' + encodeURIComponent(r.note.id) + '">' + esc(r.note.date + ' · ' + (r.note.service || '') + ' · ' + r.note.provider + (r.note.duration_min ? ' · ' + r.note.duration_min + ' min' : '')) + '</a></div>' : '') +
+        (r.state === 'aligned' ? '<label class="check-row" style="margin-top:8px"><input type="checkbox" data-change="bill-check" data-batch="' + esc(b.id) + '" data-line="' + esc(l.id) + '"' + (checked ? ' checked' : '') + (signed ? ' disabled' : '') + '> <span>I checked this line against the note</span></label>' : ''));
     });
-    v.querySelectorAll('[data-rkind]').forEach(function (b) { b.onclick = function () { S.rkind = b.dataset.rkind; render(); }; });
-    var rc = $('#rCase'); if (rc) rc.onchange = function () { S.rcase = rc.value; };
-    var rp = $('#rProv'); if (rp) rp.onchange = function () { S.rprov = rp.value; };
-    var rm = $('#rMonth'); if (rm) rm.onchange = function () { S.rmonth = rm.value; };
-    v.querySelectorAll('[data-rep-case]').forEach(function (b) { b.onclick = function () { makeReport({ kind: 'student', case_id: S.caseId }); }; });
-    v.querySelectorAll('[data-rop]').forEach(function (b) {
-      b.onclick = function () {
-        var id = b.closest('[data-rid]').dataset.rid, r = (S.data.reports || []).filter(function (x) { return x.id === id; })[0], op = b.dataset.rop;
-        if (op === 'open') return openReport(r);
-        if (op === 'remove' && !confirm('Remove this draft?')) return;
-        api('reportAction', { id: id, op: op }).then(function (d) { S.data.reports = d.reports; render(); }).catch(function (e) { toast(e.message); });
-      };
+    h += '</div>';
+    if (b.audit.flags.length) h += warn('<b>Flagged for correction:</b><br>' + b.audit.flags.map(function (f) { return esc(f.ts.slice(0, 10) + (f.line_id ? ' · line ' + f.line_id : '') + ': ' + f.reason); }).join('<br>'));
+    if (signed) h += info('<b>Signed off</b> ' + esc(b.audit.signoff.ts) + (persisted ? ' · saved in the Billing Audit log.' : ' · preview only, not saved.'));
+    else {
+      h += card('<b>Sign off</b><p class="muted">' + (b.blocker ? 'Not yet: ' + esc(b.blocker) + '.' : 'All lines align with notes and you checked each one.') + '</p>' +
+        '<button type="button" class="btn" data-act="bill-sign" data-batch="' + esc(b.id) + '"' + (b.blocker ? ' disabled' : '') + '>Sign off this batch</button>');
+      h += '<details class="card"><summary><b>Flag for correction</b></summary><div class="selects"><label for="flagLine">Line (optional)</label><select id="flagLine">' + opt('', 'Whole batch', true) +
+        b.lines.map(function (l) { return opt(l.id, l.date + ' · ' + l.provider, false); }).join('') + '</select><label for="flagReason">What needs correcting (required)</label><textarea id="flagReason" class="field" rows="2"></textarea></div>' +
+        '<button type="button" class="btn warn" data-act="bill-flag" data-batch="' + esc(b.id) + '" style="margin-top:8px">Flag for correction</button>' +
+        (b.audit.flags.length ? '<label for="clearReason" class="muted" style="display:block;margin-top:12px">Resolved? Say how (required)</label><textarea id="clearReason" class="field" rows="2"></textarea><button type="button" class="btn secondary" data-act="bill-clear" data-batch="' + esc(b.id) + '">Clear flag</button>' : '') + '</details>';
+    }
+    if (b.audit.history && b.audit.history.length) h += '<details class="card"><summary><b>Audit history</b></summary>' + b.audit.history.map(function (x) { return '<div class="muted">' + esc(x.ts + ' · ' + x.op + (x.line_id ? ' · ' + x.line_id : '') + (x.reason ? ' · ' + x.reason : '')) + '</div>'; }).join('') + '</details>';
+    return h;
+  };
+  function uniqList(a, k) { return a.map(function (x) { return x[k]; }).filter(function (x, i, arr) { return x && arr.indexOf(x) === i; }).join(', '); }
+
+  /* ---------- REPORTS ---------- */
+  ROUTES.reports = function () {
+    ensureClinical();
+    var r = S.rep, h = head('Reports & Updates');
+    if (!r.caseId && S.P.students[0]) r.caseId = S.P.students[0].id;
+    if (!r.from) r.from = daysAgo(60); if (!r.to) r.to = today(); if (!r.audience) r.audience = 'Parent';
+    h += '<div class="selects"><label for="repStudent">Student</label><select id="repStudent" data-change="rep-opt" data-k="caseId">' + S.P.students.map(function (s) { return opt(s.id, s.name, s.id === r.caseId); }).join('') + '</select>' +
+      '<div class="two"><div><label for="repFrom">From</label><input type="date" id="repFrom" data-change="rep-opt" data-k="from" value="' + esc(r.from) + '"></div><div><label for="repTo">To</label><input type="date" id="repTo" data-change="rep-opt" data-k="to" value="' + esc(r.to) + '"></div></div>' +
+      '<label for="repAudience">Audience</label><select id="repAudience" data-change="rep-opt" data-k="audience">' + ['Parent', 'School', 'Internal'].map(function (a) { return opt(a, a, a === r.audience); }).join('') + '</select></div>';
+    if (S.clinical && !S.clinical.available) h += warn('Clinical notes are not connected (' + esc(S.clinical.reason) + '). Drafts need notes to say anything.');
+    h += '<p style="margin:14px 0"><button type="button" class="btn" data-act="rep-create"' + (!S.clinical || S.loading.clinical ? ' disabled' : '') + '>Create draft from notes</button></p>';
+    var d = S.reportDraft;
+    if (d) {
+      h += '<div class="print-area"><div class="sec">Draft · awaiting your review</div>' + d.warnings.map(function (w) { return warn(esc(w)); }).join('') +
+        '<textarea id="repBody" class="field draft" data-input="rep-body" rows="16" aria-label="Draft text">' + esc(d.body) + '</textarea>' +
+        '<pre class="print-copy"></pre><div class="src">Sources: ' + (d.sources.length ? d.sources.map(function (s) { return '<a href="#/note/' + encodeURIComponent(s.id) + '">' + esc(s.label) + '</a>'; }).join(' · ') : 'none') + '</div>' +
+        '<p class="muted">' + esc(d.limits) + '</p></div>' +
+        '<div class="btns"><button type="button" class="btn secondary" data-act="rep-print">Print / PDF</button><button type="button" class="btn secondary" data-act="rep-download">Download text</button></div>' +
+        '<p><button type="button" class="btn" data-act="rep-save"' + (v4Missing() ? ' disabled' : '') + '>Save draft to Reports</button></p>' +
+        (v4Missing() ? '<p class="muted">Saving needs the v4 API update; print or download works now.</p>' : S.mode === 'fixture' ? '<p class="muted">Preview: saved drafts stay in this tab only.</p>' : '');
+    }
+    h += '<div class="sec">Saved reports</div>';
+    if (!S.P.reports.length) h += '<div class="list-empty">No saved reports.</div>';
+    S.P.reports.slice(0, 30).forEach(function (x) { h += '<a class="card row" href="#/report/' + encodeURIComponent(x.id) + '"><div class="grow"><b>' + esc(x.title) + '</b><small>' + esc(x.created.slice(0, 10) + ' · ' + x.kind) + '</small></div>' + pill(x.status, x.status === 'draft' ? 'warn' : '') + '<span class="chev"></span></a>'; });
+    h += '<details class="card"><summary><b>Other report types</b></summary><div class="selects"><label for="mrStudent">Student status report</label><select id="mrStudent">' + S.P.students.map(function (s) { return opt(s.id, s.name, false); }).join('') + '</select>' +
+      '<button type="button" class="btn secondary" data-act="mr-create" data-kind="student" style="margin-top:8px">Create student status</button>' +
+      '<label for="mrProvider">Provider hours & billing</label><select id="mrProvider">' + S.P.providers.map(function (p) { return opt(p.name, p.name, false); }).join('') + '</select>' +
+      '<label for="mrMonth">Month</label><input type="month" id="mrMonth" value="' + esc(today().slice(0, 7)) + '">' +
+      '<button type="button" class="btn secondary" data-act="mr-create" data-kind="provider" style="margin-top:8px">Create provider report</button>' +
+      '<div class="btns" style="margin-top:8px"><button type="button" class="btn secondary" data-act="mr-create" data-kind="intake">Intake status</button><button type="button" class="btn secondary" data-act="mr-create" data-kind="month">Monthly report</button></div></div></details>';
+    return h;
+  };
+  ROUTES.report = function () {
+    var r = S.P.reports.filter(function (x) { return x.id === S.params[0]; })[0];
+    if (!r) return head('Report', '#/reports', 'Reports') + '<div class="list-empty">Report not found.</div>';
+    return head(r.title, '#/reports', 'Reports') + '<div class="print-area">' + card(pill(r.status, r.status === 'draft' ? 'warn' : '') + ' <span class="muted">' + esc(r.kind + ' · created ' + r.created + (r.updated ? ' · updated ' + r.updated : '')) + '</span>' +
+      '<textarea id="srBody" class="field draft" rows="16" aria-label="Report text">' + esc(r.body) + '</textarea><pre class="print-copy"></pre>') + '</div>' +
+      '<div class="btns"><button type="button" class="btn secondary" data-act="sr" data-op="edit" data-id="' + esc(r.id) + '">Save edits</button>' +
+      (r.status === 'draft' ? '<button type="button" class="btn" data-act="sr" data-op="done" data-id="' + esc(r.id) + '">Mark reviewed</button>' : '<button type="button" class="btn secondary" data-act="sr" data-op="reopen" data-id="' + esc(r.id) + '">Reopen</button>') + '</div>' +
+      '<div class="btns" style="margin-top:10px"><button type="button" class="btn secondary" data-act="rep-print">Print / PDF</button><button type="button" class="btn ghost" data-act="sr" data-op="remove" data-id="' + esc(r.id) + '">Remove</button></div>' +
+      '<p class="muted">Reports are drafts for you; nothing is sent.</p>';
+  };
+
+  /* ---------- EMAIL & OPEN ITEMS ---------- */
+  function itemRow(x) {
+    return '<a class="card row" href="#/item/' + encodeURIComponent(x.id) + '"><div class="grow"><b>' + esc(x.subject || x.triggerName) + '</b><small>' + esc((x.recipient || 'No recipient') + (x.student ? ' · ' + x.student : '') + (x.created ? ' · ' + x.created.slice(0, 10) : '')) + '</small></div><span class="chev"></span></a>';
+  }
+  ROUTES.email = function () {
+    var cid = S.params[0] || '', g = M.queueGroups(S.P), stu = cid ? M.student(S.P, cid) : null;
+    var f = function (a) { return a.filter(function (x) { return !cid || x.case_id === cid; }); };
+    var h = head(stu ? 'Open items · ' + stu.name : 'Email & Open Items', stu ? '#/student/' + encodeURIComponent(cid) : '#/', stu ? stu.name : 'Home');
+    h += '<p class="muted">Drafts and follow-ups from the cases. Nothing is sent from TTG Ops; approving marks a draft for Katya to send.</p>';
+    h += '<div class="sec">Needs your review</div>';
+    var mine = f(g.needsYou); if (!mine.length) h += '<div class="list-empty">Nothing waiting for you.</div>'; mine.forEach(function (x) { h += itemRow(x); });
+    var today_ = S.P.todayItems.filter(function (x) { return !cid || x.case_id === cid; });
+    if (today_.length) h += '<details class="card"><summary><b>Today\u2019s follow-ups (' + today_.length + ')</b></summary>' + today_.map(function (x) { return '<div class="muted" style="margin-top:6px">' + esc(x.trigger + ' · ' + (x.student || '') + ' · ' + x.recipient + (x.note ? ' · ' + x.note : '')) + '</div>'; }).join('') + '</details>';
+    [['With others', f(g.others)], ['Approved, waiting to be sent by Katya', f(g.approved)], ['Dismissed', f(g.dismissed)]].forEach(function (grp) {
+      if (grp[1].length) h += '<details class="card"><summary><b>' + esc(grp[0]) + ' (' + grp[1].length + ')</b></summary>' + grp[1].map(itemRow).join('') + '</details>';
     });
-    v.querySelectorAll('[data-act]').forEach(function (b) {
-      b.onclick = function () {
-        var a = b.dataset.act;
-        if (a === 'run') runTriggers();
-        if (a === 'mkrep') { var k = S.rkind || 'student', d = { kind: k }; if (k === 'student') d.case_id = ($('#rCase') || {}).value; if (k === 'provider') d.provider = ($('#rProv') || {}).value; if (k === 'provider' || k === 'month') d.month = ($('#rMonth') || {}).value; makeReport(d); }
-        if (a === 'note') { var t = $('#noteIn').value.trim(); if (!t) return; api('addNote', { case_id: S.caseId, text: t }).then(function (d) { replaceCase(d.case); toast('Note added'); }).catch(function (e) { toast(e.message); }); }
-        if (a === 'saveSet') { var vals = {}; v.querySelectorAll('[data-set]').forEach(function (i) { vals[i.dataset.set] = i.value; }); api('saveSettings', { values: vals }).then(function (d) { S.data.settings = d.settings; toast('Cadence saved'); load(true); }).catch(function (e) { toast(e.message); }); }
-        if (a === 'forget') { if (confirm('Remove your key from this device?')) { localStorage.removeItem('ttgops.k'); location.reload(); } }
-      };
+    var reqs = S.P.requests.filter(function (r) { return !cid || r.case_id === cid; });
+    h += '<div class="sec">Requests to Katya</div>';
+    reqs.slice().reverse().slice(0, 20).forEach(function (r) { h += card('<div class="row"><div class="grow">' + esc(r.text) + '<small>' + esc((r.student ? r.student + ' · ' : '') + r.ts.slice(0, 10)) + '</small></div>' + pill(r.status || 'new', r.status === 'done' ? '' : 'warn') + '</div>' + (r.reply ? '<div class="note-body muted">' + esc(r.reply) + '</div>' : '')); });
+    h += card('<textarea id="reqText" class="field" rows="2" placeholder="Ask Katya for something' + (stu ? ' about ' + esc(stu.name) : '') + '"></textarea><button type="button" class="btn secondary" data-act="req-add" data-case="' + esc(cid) + '">Add request</button>');
+    return h;
+  };
+  ROUTES.item = function () {
+    var x = S.P.queue.filter(function (q) { return q.id === S.params[0]; })[0];
+    if (!x) return head('Item', '#/email', 'Open items') + '<div class="list-empty">Item not found.</div>';
+    var draft = x.status === 'draft';
+    var h = head(x.subject || x.triggerName, '#/email', 'Open items');
+    h += card(kv([['Status', esc(x.status), true], ['To', x.recipient], ['Contact', x.contact], ['Channel', x.channel], ['Student', x.case_id ? '<a href="#/student/' + encodeURIComponent(x.case_id) + '">' + esc(x.student) + '</a>' : '', !!x.case_id],
+      ['Provider', x.providerKey ? '<a href="#/provider/' + esc(x.providerKey) + '">' + esc(x.recipient) + '</a>' : '', !!x.providerKey], ['Why', x.triggerName], ['Owner', x.owner]]));
+    h += '<div class="selects"><label for="qSubject">Subject</label><input id="qSubject" class="field" value="' + esc(x.subject) + '"' + (draft ? '' : ' readonly') + '>' +
+      '<label for="qMessage">Message (draft)</label><textarea id="qMessage" class="field" rows="8"' + (draft ? '' : ' readonly') + '>' + esc(x.message) + '</textarea></div>';
+    if (draft) h += '<div class="btns" style="margin-top:10px"><button type="button" class="btn secondary" data-act="q" data-op="edit" data-id="' + esc(x.id) + '">Save draft</button><button type="button" class="btn" data-act="q" data-op="approve" data-id="' + esc(x.id) + '">Approve for Katya</button></div>' +
+      '<p><button type="button" class="btn ghost" data-act="q" data-op="dismiss" data-id="' + esc(x.id) + '">Dismiss</button></p>';
+    else h += '<p><button type="button" class="btn secondary" data-act="q" data-op="reopen" data-id="' + esc(x.id) + '">Reopen as draft</button></p>';
+    h += '<p class="muted">Approving does not send anything. It marks the draft for Katya to send and logs it.</p>';
+    return h;
+  };
+
+  /* ---------- SETTINGS ---------- */
+  ROUTES.settings = function () {
+    var P = S.P, h = head('Settings'), sy = P.sync || {}, v = P.v4;
+    var src = function (name, ok, detail) { return '<dt>' + esc(name) + '</dt><dd>' + (ok ? pill('Connected') : pill('Not connected', 'warn')) + ' <span class="muted">' + esc(detail || '') + '</span></dd>'; };
+    h += card('<b>Data sources</b><dl class="kv" style="margin-top:8px">' +
+      src('Case roster', sy.roster_ok, (sy.roster_updated ? 'updated ' + sy.roster_updated : '') + (sy.stale ? ' · out of sync with Case Board' : '')) +
+      src('Student chart', P.chartSync && P.chartSync.ok, P.chartSync ? P.chartSync.matched + ' of ' + P.chartSync.rows + ' rows matched' : '') +
+      src('Clinical notes', v && v.clinical.present, v ? v.clinical.rows + ' rows' : 'API update needed') +
+      src('Sessions without notes', v && v.noNote.present, v ? v.noNote.rows + ' rows' : 'API update needed') +
+      src('Incoming billing', v && v.billing.present, v ? v.billing.rows + ' lines' : 'API update needed') +
+      src('Billing audit log', v && v.audit.present, v ? (v.audit.present ? v.audit.rows + ' entries' : 'created on your first billing decision') : 'API update needed') +
+      '</dl>' + (sy.roster_only && sy.roster_only.length ? '<p class="muted">On roster, not on Case Board: ' + esc(sy.roster_only.join(', ')) + '</p>' : '') +
+      (sy.board_only && sy.board_only.length ? '<p class="muted">On Case Board, not on roster: ' + esc(sy.board_only.join(', ')) + '</p>' : '') +
+      '<p class="muted">Ensora exports are imported privately into the Clinical Notes tab; they are never part of this public app.</p>');
+    h += card('<b>Access</b><p class="muted">Mode: ' + esc(S.mode === 'fixture' ? 'fictional preview (no network)' : 'live') + '. The key stays on this device; case data is never stored on the device or in links.</p>' +
+      (S.mode === 'live' ? '<button type="button" class="btn secondary" data-act="forget-key">Forget key on this device</button>' : '<a class="btn secondary" href="./">Leave preview</a>'));
+    return h;
+  };
+
+  /* ---------- actions ---------- */
+  function applyResult(r) {
+    if (!r) return;
+    if (r.case) { S.boot.cases = S.boot.cases.map(function (c) { return c.id === r.case.id ? r.case : c; }); }
+    if (r.queue) S.boot.queue = r.queue;
+    if (r.requests) S.boot.requests = r.requests;
+    if (r.reports) S.boot.reports = r.reports;
+    if (r.case || r.queue || r.requests || r.reports) S.P = M.normalizeBootstrap(S.boot);
+    if (r.billing) S.billing = r.billing;
+  }
+  function run(action, data, okMsg) {
+    if (S.busy) return Promise.resolve(null);
+    S.busy = true;
+    return api(action, data).then(function (r) { applyResult(r); if (okMsg) toast(okMsg); return r; })
+      .catch(function (e) { toast(e.message === 'unauthorized' ? 'Key rejected' : 'Not saved: ' + e.message); return null; })
+      .then(function (r) { S.busy = false; render(); return r; });
+  }
+  function v(id) { var el = $('#' + id); return el ? String(el.value || '') : ''; }
+  var saved = function () { return S.mode === 'fixture' ? ' (preview only)' : ''; };
+  var ACT = {
+    'home-search': function () { S.q = v('homeQ').trim(); if (location.hash === '#/search') render(); else location.hash = '#/search'; },
+    'stu-filter': function (el) { S.stuQ = String(el.value || ''); render(); },
+    'note-filter': function (el) { S.noteF[el.getAttribute('data-k')] = String(el.value || ''); render(); },
+    'notes-by-provider': function (el) { S.noteF = { providerKey: el.getAttribute('data-key') }; },
+    'case-note': function (el) { var t = v('caseNote').trim(); if (!t) return toast('Write a note first'); return run('addNote', { case_id: el.getAttribute('data-id'), text: t, type: 'note' }, 'Note saved' + saved()); },
+    'case-edit': function (el) {
+      var f = v('editField'); if (M.EDITABLE.indexOf(f) < 0) return toast('Pick a field');
+      return run('updateCase', { case_id: el.getAttribute('data-id'), field: f, value: v('editValue') }, 'Field saved' + saved());
+    },
+    'q': function (el) {
+      var op = el.getAttribute('data-op'), d = { id: el.getAttribute('data-id'), op: op };
+      if (op === 'edit' || op === 'approve') { d.subject = v('qSubject'); d.message = v('qMessage'); }
+      if (op === 'approve' && !confirm('Approve this draft for Katya to send? Nothing is sent from TTG Ops.')) return;
+      if (op === 'dismiss' && !confirm('Dismiss this draft?')) return;
+      return run('queueAction', d, { edit: 'Draft saved', approve: 'Approved for Katya', dismiss: 'Dismissed', reopen: 'Reopened' }[op] + saved());
+    },
+    'req-add': function (el) { var t = v('reqText').trim(); if (!t) return toast('Write the request first'); return run('addRequest', { text: t, case_id: el.getAttribute('data-case') || '', kind: 'free text' }, 'Request added' + saved()); },
+    'rep-opt': function (el) { S.rep[el.getAttribute('data-k')] = String(el.value || ''); },
+    'rep-create': function () {
+      var s = M.student(S.P, S.rep.caseId); if (!s) return toast('Pick a student');
+      if (S.rep.from && S.rep.to && S.rep.from > S.rep.to) return toast('From date is after To date');
+      S.reportDraft = M.buildReportDraft(s, S.clinical, { from: S.rep.from, to: S.rep.to, audience: S.rep.audience }); render();
+    },
+    'rep-body': function (el) { if (S.reportDraft) S.reportDraft.body = String(el.value || ''); },
+    'rep-print': function () {
+      var ta = $('.print-area textarea'), pre = $('.print-area .print-copy'); if (ta && pre) pre.textContent = ta.value;
+      var done = function () { document.body.classList.remove('print-draft'); };
+      document.body.classList.add('print-draft');
+      try { window.addEventListener('afterprint', done, { once: true }); setTimeout(done, 60000); window.print(); } catch (e) { done(); } },
+    'rep-download': function () {
+      var d = S.reportDraft; if (!d) return;
+      var text = d.body + '\n\nSources:\n' + d.sources.map(function (s) { return '- ' + s.label + ' (' + s.source + ')'; }).join('\n') + '\n';
+      var a = document.createElement('a'), url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+      a.href = url; a.download = 'ttg-update-' + today() + '.txt'; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    },
+    'rep-save': function () {
+      var d = S.reportDraft; if (!d || !d.body.trim()) return toast('Nothing to save');
+      var body = d.body + '\n\nSources: ' + (d.sources.map(function (s) { return s.label + ' [' + s.id + ']'; }).join('; ') || 'none');
+      return run('saveReportDraft', { case_id: d.case_id, title: d.title, body: body, audience: d.audience, from: d.from, to: d.to }, 'Draft saved to Reports' + saved());
+    },
+    'sr': function (el) {
+      var op = el.getAttribute('data-op'), d = { id: el.getAttribute('data-id'), op: op };
+      if (op === 'edit') d.body = v('srBody');
+      if (op === 'remove' && !confirm('Remove this report?')) return;
+      return run('reportAction', d, { edit: 'Saved', done: 'Marked reviewed', reopen: 'Reopened', remove: 'Removed' }[op] + saved()).then(function (r) { if (r && op === 'remove') location.hash = '#/reports'; });
+    },
+    'mr-create': function (el) {
+      var k = el.getAttribute('data-kind'), d = { kind: k };
+      if (k === 'student') d.case_id = v('mrStudent');
+      if (k === 'provider') { d.provider = v('mrProvider'); d.month = v('mrMonth'); }
+      if (k === 'month') d.month = v('mrMonth') || today().slice(0, 7);
+      return run('makeReport', d, 'Report created' + saved()).then(function (r) { if (r && r.report) location.hash = '#/report/' + encodeURIComponent(r.report.id); });
+    },
+    'bill-check': function (el) { return billDecide(el.getAttribute('data-batch'), { op: el.checked ? 'check' : 'uncheck', line_id: el.getAttribute('data-line') }); },
+    'bill-flag': function (el) { var r = v('flagReason').trim(); if (r.length < 5) return toast('Say what needs correcting'); return billDecide(el.getAttribute('data-batch'), { op: 'flag', line_id: v('flagLine'), reason: r }); },
+    'bill-clear': function (el) { var r = v('clearReason').trim(); if (r.length < 5) return toast('Say how it was resolved'); return billDecide(el.getAttribute('data-batch'), { op: 'clear_flag', reason: r }); },
+    'bill-sign': function (el) {
+      var b = batch(el.getAttribute('data-batch')); if (!b || b.blocker) return toast(b ? b.blocker : 'Batch not found');
+      if (!confirm('Sign off ' + b.id + '? ' + b.lines.length + ' line(s) match their notes and you checked each one.' + (S.mode === 'fixture' ? ' (Preview: not saved.)' : ' This is recorded in the Billing Audit log.') + ' It does not pay or send anything.')) return;
+      return billDecide(b.id, { op: 'signoff', confirm: true });
+    },
+    'forget-key': function () { if (confirm('Remove your key from this device?')) { localStorage.removeItem('ttgops.k'); location.reload(); } },
+    'retry': function () { S.P = null; load(); }
+  };
+  function batch(id) { return S.billing && (S.billing.batches || []).filter(function (x) { return x.id === id; })[0]; }
+  function billDecide(batchId, d) {
+    var b = batch(batchId); if (!b) return toast('Batch not found');
+    d.batch_id = b.id; d.batch_version = b.version; d.request_id = reqId();
+    return run('billingDecision', d, { check: 'Checked', uncheck: 'Unchecked', flag: 'Flagged', clear_flag: 'Flag cleared', signoff: 'Signed off' }[d.op] + (S.mode === 'fixture' ? ' (preview only, not saved)' : ' · saved to audit log'));
+  }
+  function delegate(type, attr) {
+    view.addEventListener(type, function (e) {
+      var el = e.target && e.target.closest ? e.target.closest('[' + attr + ']') : null; if (!el || !view.contains(el)) return;
+      var name = el.getAttribute(attr); if (!ACT[name]) return;
+      if (type === 'submit') e.preventDefault();
+      ACT[name](el, e);
     });
   }
-  $('#sheet').addEventListener('click', function (e) { if (e.target.closest('[data-close]')) closeSheet(); });
-  $('#katyaFab').onclick = function () { if (S.data) katya(); };
-  $('#refreshBtn').onclick = function () { if (KEY && apiUrl()) load(); };
-  window.addEventListener('hashchange', route);
-  /* install */
-  function syncInstall() { var b = $('#installBtn'); if (!window.AppInstall) return; b.hidden = !AppInstall.visible(); }
-  $('#installBtn').onclick = function () { if (window.AppInstall) AppInstall.install(); };
-  if (window.AppInstall) { AppInstall.onChange(syncInstall); syncInstall(); }
-  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(function () {});
-  route();
-  if (!KEY) gate('key'); else if (!apiUrl()) gate('api'); else load();
+
+  /* ---------- gate / error / start ---------- */
+  function gate(kind, msg) {
+    var h = '<div class="gate"><div class="brand-row"><img src="icons/icon-192.png" alt=""><div><b>TTG Ops</b><small>Private</small></div></div>' + (msg ? warn(esc(msg)) : '');
+    if (kind === 'key') h += '<p class="muted">Open TTG Ops with your personal admin link, or paste the key once below.</p><input id="gateKey" type="password" autocomplete="off" placeholder="Admin key"><button class="btn" id="gateSaveKey">Save key</button>';
+    else h += '<p class="muted">API address missing. Paste the Apps Script web app /exec URL.</p><input id="gateApi" placeholder="https://script.google.com/macros/s/…/exec"><button class="btn" id="gateSaveApi">Save API address</button>';
+    h += '<p class="muted" style="margin-top:16px"><a href="?fixtures=1">Open the fictional preview</a> (sample data only, no connection)</p></div>';
+    view.innerHTML = h;
+    var sk = $('#gateSaveKey'); if (sk) sk.onclick = function () { var k = ($('#gateKey').value || '').trim(); if (!/^[A-Za-z0-9_-]{20,128}$/.test(k)) return toast('Key looks invalid'); localStorage.setItem('ttgops.k', k); KEY = k; load(); };
+    var sa = $('#gateSaveApi'); if (sa) sa.onclick = function () { var u = ($('#gateApi').value || '').trim(); if (!allowedApi(u)) return toast('Address looks invalid'); localStorage.setItem('ttgops.api', u); load(); };
+  }
+  function errorView(msg) {
+    view.innerHTML = '<div class="gate"><div class="brand-row"><img src="icons/icon-192.png" alt=""><div><b>TTG Ops</b><small>Could not load</small></div></div>' +
+      warn('<b>Live data could not be loaded.</b> ' + esc(msg) + '<br>No sample data is shown in its place.') +
+      '<button class="btn" id="retryBtn">Try again</button><p class="muted" style="margin-top:16px"><a href="?fixtures=1">Open the fictional preview instead</a></p></div>';
+    var rb = $('#retryBtn'); if (rb) rb.onclick = function () { load(); };
+  }
+  function load() {
+    if (S.mode === 'live') {
+      if (!KEY) return gate('key');
+      if (!allowedApi(apiUrl())) return gate('api');
+    }
+    view.innerHTML = '<div class="gate"><p class="muted">Loading…</p></div>';
+    return api('bootstrap').then(function (d) {
+      S.boot = d; S.P = M.normalizeBootstrap(d); S.clinical = null; S.billing = null; route();
+    }).catch(function (e) {
+      if (/unauthorized/.test(e.message)) return gate('key', KEY ? 'The saved key was not accepted.' : '');
+      errorView(e.message);
+    });
+  }
+  /* Fixture files are only fetched in fixture mode, so live mode never has sample records in memory. */
+  function loadScripts(list) {
+    return list.reduce(function (p, src) {
+      return p.then(function () { return new Promise(function (res, rej) { var sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); }); });
+    }, Promise.resolve());
+  }
+  function start() {
+    if (started) return; started = true;
+    KEY = S.mode === 'live' ? (localStorage.getItem('ttgops.k') || '') : '';
+    window.addEventListener('hashchange', route);
+    /* Registering the v9 worker replaces older workers and deletes their caches (see sw.js). */
+    try { if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(function () {}); } catch (e) {}
+    delegate('click', 'data-act'); delegate('change', 'data-change'); delegate('input', 'data-input'); delegate('submit', 'data-submit');
+    if (S.mode === 'fixture' && !(window.TTG_V4_FIXTURES && window.TTG_FAKE_API)) return loadScripts(['fixtures/v4-sample.js', 'fixtures/fake-api.js']).then(load, function () { errorView('Fictional preview files could not be loaded.'); });
+    return load();
+  }
+  if (window.__TTG_TEST__) window.__TTG_TEST__.app = { S: S, ACT: ACT, render: render, route: route, api: api, load: load, esc: esc, ROUTES: ROUTES };
+  start();
 })();
