@@ -1,0 +1,9 @@
+{
+  "name": "ttg-ops",
+  "private": true,
+  "description": "TTG Ops public front-end",
+  "scripts": {
+    "test": "node tests/run.mjs",
+    "syntax": "node --check model.js && node --check app.js && node --check boot.js && node --check fixtures/v4-sample.js"
+  }
+}
