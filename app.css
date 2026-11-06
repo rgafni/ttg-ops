@@ -94,3 +94,26 @@ a { color: var(--teal); text-decoration: none; }
 .gate { max-width: 420px; margin: 40px auto; padding: 24px 16px; }
 .gate input { width: 100%; min-height: var(--tap); margin: 10px 0; border-radius: 12px; border: 1px solid var(--line); padding: 10px 12px; }
 .check-row { display: flex; gap: 10px; align-items: flex-start; }
+
+/* v4 forms, filters, drafts */
+.field { width: 100%; min-height: var(--tap); border-radius: 12px; border: 1px solid var(--line); padding: 10px 12px; background: var(--card); margin: 8px 0; }
+textarea.field { min-height: 72px; resize: vertical; }
+textarea.draft { min-height: 320px; font-size: 15px; line-height: 1.5; }
+.selects input[type=date], .selects input[type=month] { width: 100%; min-height: var(--tap); border-radius: 12px; border: 1px solid var(--line); padding: 8px 10px; background: var(--card); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.filters { margin-bottom: 12px; }
+details.card > summary { cursor: pointer; min-height: 32px; list-style: none; display: flex; align-items: center; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary::after { content: "▾"; margin-left: auto; color: var(--muted); }
+details.card[open] > summary { margin-bottom: 8px; }
+.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+a.tile { text-decoration: none; }
+a.chip { display: inline-flex; align-items: center; }
+a.btn { text-decoration: none; }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+pre.print-copy { display: none; }
+@media print {
+  body.print-draft .print-area textarea { display: none !important; }
+  body.print-draft pre.print-copy { display: block !important; white-space: pre-wrap; font: 14px/1.5 var(--font); }
+  body.print-draft #view > *:not(.print-area), body.print-draft .toast, body.print-draft .sheet { display: none !important; }
+}
