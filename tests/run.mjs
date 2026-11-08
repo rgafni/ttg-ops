@@ -379,16 +379,84 @@ test('REGRESSION SW: requests with a query (e.g. ?k=) are never cached; shell ca
   const ev = (url, method = 'GET', mode) => { let p = null; handlers.fetch({ request: { url, method, mode }, respondWith: x => { p = x; } }); return p; };
   await ev('https://rgafni.github.io/ttg-ops/?k=SECRETKEYSECRETKEYSECRET');
   await ev('https://rgafni.github.io/ttg-ops/index.html?k=SECRETKEYSECRETKEYSECRET');
-  await ev('https://rgafni.github.io/ttg-ops/app.js?v=9');
+  await ev('https://rgafni.github.io/ttg-ops/app.js?v=10');
   await ev('https://rgafni.github.io/ttg-ops/app.js');
   await ev('https://rgafni.github.io/ttg-ops/private-notes.json');
   assert.equal(ev('https://script.google.com/macros/s/X/exec', 'POST'), null);
   await flush();
   assert.ok(!puts.some(p => /\?|SECRET/.test(p)), 'cached a query URL: ' + puts);
   assert.deepStrictEqual(puts, ['https://rgafni.github.io/ttg-ops/app.js']);
-  assert.match(read('sw.js'), /ttgops-v9/);
+  assert.match(read('sw.js'), /ttgops-v10/);
   assert.ok(read('app.js').includes("navigator.serviceWorker.register('sw.js')"), 'app must register the new worker so old caches are purged');
 });
+/* Student/provider record redesign — optional fields are synthetic only. */
+const sectionNames = h => [...h.matchAll(/data-section="([^"]+)"/g)].map(m => m[1].replace(/&amp;/g, '&'));
+test('records: student has exactly seven requested sections in order, no field dumps or empty rows', async () => {
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush();
+  const a = t.app.S.P.students.find(x => x.name === 'Avery Demo'); await t.go('#/student/' + a.id); await flush();
+  assert.deepStrictEqual(sectionNames(t.html), ['Child info', 'Cases', 'Providers', 'Schedule', 'Billing', 'Documents', 'Clinical Data']);
+  assert.doesNotMatch(t.html.replace(/<details[\s\S]*?<\/details>/g, ''), /Hours &amp; key dates|Hours & key dates|Not on file|Last contact:|Sched vs delivered|Notes submitted|Assessment\/report due/);
+  assert.match(t.html, /2019-03-04/); assert.match(t.html, /DEMO-OSIS-0001/); assert.match(t.html, /Sample School/); assert.match(t.html, /Fictional District/);
+  assert.match(t.html, /Parent of Avery/); assert.match(t.html, /id="caseNote"/); assert.match(t.html, /data-act="case-edit"/);
+});
+test('records: one card per explicit case number, distinct authorizations, units and hours are never conflated', async () => {
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush();
+  const a = t.app.S.P.students.find(x => x.name === 'Avery Demo'); await t.go('#/student/' + a.id);
+  assert.equal(a.caseRecords.length, 2);
+  const html = t.html.split('data-section="Cases"')[1].split('</section>')[0];
+  assert.match(html, /Case # DEMO-CASE-OT-01/); assert.match(html, /Case # DEMO-CASE-SLP-02/);
+  assert.match(html, /Authorized hours<\/dt><dd>30/); assert.match(html, /Authorized units<\/dt><dd>24/);
+  assert.match(html, /\$50\/hour \(fictional\)/); assert.match(html, /Sample funding/);
+  assert.match(html, /2026-09-01/); assert.match(html, /2027-01-05/);
+  assert.equal((html.match(/<h3>/g) || []).length, 2);
+});
+test('records: absent live fields stay absent; no invented OSIS, case numbers, rates, hours or SSN', async () => {
+  const data = liveFX(o => o.bootstrap.cases.forEach(c => { delete c.service_cases; delete c.osis; delete c.district; (c.team || []).forEach(p => { delete p.ssn; delete p.rate; delete p.hours; }); }));
+  const s = server(data), t = boot({ key: KEY, fetchImpl: s.fetchImpl }); await flush();
+  const a = t.app.S.P.students[0]; await t.go('#/student/' + a.id); await flush();
+  const html = t.html;
+  assert.doesNotMatch(html, /DEMO-CASE|Case #|<dt>Rate<|<dt>OSIS<|Not on file/);
+  assert.match(html, /Case record/); assert.match(html, /Record ID/);
+  for (const p of t.app.S.P.providers) { await t.go('#/provider/' + p.key); assert.doesNotMatch(t.html, /SSN \(last 4|<dt>Rate<|<dt>Hours<|Not on file/); }
+});
+test('records: provider has five requested sections, scoped roster/billing/notes, masked SSN, no decisions', async () => {
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true, key: KEY }); await flush();
+  const p = t.app.S.P.providers.find(x => x.name === 'Jamie Fern'); await t.go('#/provider/' + p.key); await flush();
+  assert.deepStrictEqual(sectionNames(t.html), ['Provider info', 'Case roster & schedule', 'Billing sheets', 'Documents', 'Clinical data']);
+  assert.match(t.html, /\*\*\*-\*\*-0042/); assert.doesNotMatch(t.html, /000-00-0042|000000042/);
+  assert.match(t.html, /\$40\/hour \(fictional\)/); assert.match(t.html, /Sample ABA credential/);
+  assert.match(t.html, /Fictional credential record/); assert.doesNotMatch(t.html, /Not on file|data-act="bill-|data-change="bill-check"/);
+  const ml = t.app.S.P.providers.find(x => x.name === 'Morgan Lane'); await t.go('#/provider/' + ml.key); await flush();
+  assert.match(t.html, /INV-DEMO-OCT/); assert.match(t.html, /Read-only analysis/);
+  const a = t.app.S.P.students.find(x => x.name === 'Avery Demo'); await t.go('#/student/' + a.id);
+  assert.match(t.html, /INV-DEMO-OCT/); assert.doesNotMatch(t.html, /INV-DEMO-ABA|data-act="bill-|data-change="bill-check"/);
+  assert.equal(t.fetches.length, 0); assert.deepStrictEqual(t.setItems, []);
+});
+test('records: SSN masking retains only last four digits in normalized provider, never put in URLs or storage', async () => {
+  assert.equal(M.maskSSN('000-00-0042'), '***-**-0042'); assert.equal(M.maskSSN('0042'), '***-**-0042'); assert.equal(M.maskSSN('not available'), '');
+  const P = M.normalizeBootstrap(FX.bootstrap), p = P.providers.find(x => x.name === 'Jamie Fern');
+  assert.equal(p.ssn, '***-**-0042'); assert.doesNotMatch(JSON.stringify(P), /000-00-0042|000000042/);
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush(); await t.go('#/provider/' + p.key);
+  const links = [...t.html.matchAll(/href="([^"]+)"/g)].map(x => x[1]); assert.ok(links.every(u => !/0042|ssn/i.test(u)));
+  assert.deepStrictEqual(t.setItems, []);
+});
+test('records: parents and guardians in team or assignments never become providers', () => {
+  const b = clone(FX.bootstrap); b.cases[0].team.push({name:'Family Demo',role:'Guardian',phone:'555-0199'});
+  b.cases[0].assignments.push({provider:'Family Demo',role:'Parent'});
+  const p = M.normalizeBootstrap(b); assert.ok(!p.providers.some(x => x.name === 'Family Demo')); assert.ok(!p.students[0].assignments.some(x => x.role === 'Parent'));
+});
+test('records: empty and hostile optional record fields are hidden/escaped and unsafe document URLs rejected', async () => {
+  const X = '<img src=x onerror=alert(1)>', data = liveFX(o => {
+    const c = o.bootstrap.cases[0]; c.osis=X; c.goals=X; c.district=X;
+    c.service_cases=[{case_number:X,auth_start:X,auth_end:X,rate:X,provider:X,funding_source:X}];
+    c.documents=[{title:X,url:'javascript:alert(1)'}]; c.team[0].credentials=X; c.team[0].documents=[{title:X,url:'javascript:alert(1)'}];
+  });
+  const s = server(data), t = boot({key:KEY,fetchImpl:s.fetchImpl}); await flush();
+  const a = t.app.S.P.students.find(x => x.name === 'Lena Live'); await t.go('#/student/' + a.id); await flush();
+  assert.match(t.html,/&lt;img/); assert.doesNotMatch(t.html, /<img src=x|href="javascript:/);
+  const p = t.app.S.P.providers.find(x => x.name === 'Kai North'); await t.go('#/provider/' + p.key); assert.doesNotMatch(t.html, /<img src=x|href="javascript:/);
+});
+
 test('public files contain only fictional data: no staff full names, real ids, keys or private links', () => {
   for (const f of ['fixtures/v4-sample.js', 'fixtures/fake-api.js', 'model.js', 'billing-core.js', 'app.js', 'sw.js', 'index.html', 'docs/DEPLOY_PREREQUISITES.md', 'README.md']) {
     const s = read(f);

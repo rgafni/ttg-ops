@@ -140,44 +140,86 @@
     });
     return h;
   };
-  ROUTES.student = function () {
-    var s = M.student(S.P, S.params[0]); if (!s) return head('Student', '#/students', 'Students') + '<div class="list-empty">Student not found.</div>';
-    if (!S.clinical) ensureClinical();
-    var h = head(s.name, '#/students', 'Students');
-    if (s.duplicateId || s.sameNameIds.length) h += warn('Another record has the same name (' + esc(s.sameNameIds.join(', ')) + '). Records are kept separate.');
-    h += card('<div class="row"><div class="grow"><b>' + esc(s.setting || 'Setting not on file') + '</b><small>' + esc(s.source) + ' · ID ' + esc(s.id) + '</small></div>' + healthPills(s.health) + '</div>' + (s.why ? '<p class="muted" style="margin:6px 0 0">' + esc(s.why) + '</p>' : '') +
-      (s.fieldMap && M.val(s.fieldMap['Roster notes (live issues)']) ? '<p class="note-body" style="margin:6px 0 0">' + esc(M.val(s.fieldMap['Roster notes (live issues)'])) + '</p>' : ''));
-    var c = s.chart;
-    h += section('Profile', c ? kv([['Age', c.age != null ? String(c.age) : ''], ['School', c.school], ['Attends school', c.attends], ['Service location', c.location], ['Weekly schedule', c.schedule], ['Hours / week', c.hours]]) + '<div class="src">Source: student chart</div>' : 'Not in the student chart.');
-    var team = s.providers.map(function (p) { return (p.key ? '<a href="#/provider/' + esc(p.key) + '">' + esc(p.name) + '</a>' : esc(p.name)) + ' · ' + esc(p.role); });
-    s.bcba.forEach(function (b) { team.push((b.key ? '<a href="#/provider/' + esc(b.key) + '">' + esc(b.name) + '</a>' : esc(b.name)) + ' · BCBA'); });
-    h += section('Team', (team.length ? team.join('<br>') : 'No providers on file') +
-      (s.related.length ? '<br><span class="muted">Related services: ' + esc(s.related.join('; ')) + '</span>' : '') +
-      (s.openRoles.length ? '<br>' + pill('Open: ' + s.openRoles.join(', '), 'warn') : '') +
-      (s.departed.length ? '<br><span class="muted">Left the case: ' + esc(s.departed.join(', ')) + '</span>' : '') +
-      (s.family.length ? '<br><span class="muted">Family contact: ' + esc(s.family.join('; ')) + '</span>' : ''));
-    h += section('Services & schedule', s.assignments.length ? s.assignments.map(function (a) {
-      return '<b>' + esc(a.role || 'Service') + '</b> · ' + (a.open ? pill('Unstaffed', 'warn') : esc(a.provider)) + '<br><span class="muted">' + nof(a.schedule) + (a.mandate ? ' · mandate ' + esc(a.mandate) + ' h/wk' : '') + (a.status ? ' · ' + esc(a.status) : '') + '</span>';
-    }).join('<br>') + '<div class="src">Source: Provider Hub assignments</div>' : 'No assignments on file.');
-    var b = s.bank || {};
-    h += section('Hours & key dates', kv([['Hour bank', b.total != null ? b.total + ' h' + (b.pct != null ? ' · ' + b.pct + '% left' : '') : ''], ['Auth ends', b.expiry]].concat(
-      s.fields.filter(function (f) { return /due|review|Last contact|Sched|Delivered|Sessions logged|Notes submitted|Invoice|Billing gap/.test(f.k); }).map(function (f) { return [f.k, f.v]; }))) + '<div class="src">Source: Case Board</div>');
-    var it = s.intake, en = s.ensora;
-    h += section('Intake & documents', (it ? kv([['Status', it.status], ['Received', it.received], ['Missing', it.missing]]) + (it.links.length ? it.links.map(function (u, i) { return ext(u, 'Document folder ' + (i + 1)); }).join(' · ') : '') : 'No intake record.') +
-      '<div style="margin-top:8px">' + (en ? kv([['Ensora', en.use], ['On file', en.data], ['Last capture', en.last], ['Missing', en.missing]]) + (en.sourceUrl ? ext(en.sourceUrl, 'Ensora source') : '') : 'No Ensora record.') + '</div>');
-    var notes = S.clinical && S.clinical.available ? M.filterNotes(S.clinical.notes, { caseId: s.id }) : null;
-    h += section('Clinical notes', S.loading.clinical ? 'Loading…' : !S.clinical ? '' : !S.clinical.available ? esc(S.clinical.reason) :
-      notes.length ? notes.length + ' note' + (notes.length === 1 ? '' : 's') + ', latest ' + esc(notes[0].date) + ' · <a href="#/notes/' + encodeURIComponent(s.id) + '">Open notes</a>' : 'No notes on file (this does not mean sessions were missed).');
-    var items = S.P.queue.filter(function (x) { return x.case_id === s.id && x.status === 'draft'; });
-    var reps = S.P.reports.filter(function (r) { return r.scope === s.name; });
-    h += section('Open items & reports', (items.length ? '<a href="#/email/' + encodeURIComponent(s.id) + '">' + items.length + ' open item' + (items.length === 1 ? '' : 's') + '</a>' : 'No open items') + ' · ' +
-      (reps.length ? reps.slice(0, 3).map(function (r) { return '<a href="#/report/' + encodeURIComponent(r.id) + '">' + esc(r.title) + '</a> ' + pill(r.status, r.status === 'draft' ? 'warn' : ''); }).join('<br>') : 'No saved reports'));
-    h += card('<b>Case log</b><div class="muted">Roni\u2019s case notes and edits (not clinical notes)</div>' +
-      (s.caseLog.length ? s.caseLog.slice(0, 8).map(function (n) { return '<div style="margin-top:8px"><span class="src">' + esc(n.ts.slice(0, 10)) + ' · ' + esc(n.type) + '</span><div class="note-body" style="margin:2px 0 0">' + esc(n.text) + '</div></div>'; }).join('') : '<p class="muted">No entries yet.</p>') +
-      '<textarea id="caseNote" class="field" rows="2" placeholder="Add a case note"></textarea><button class="btn secondary" type="button" data-act="case-note" data-id="' + esc(s.id) + '">Save note</button>');
-    h += '<details class="card"><summary><b>Edit case fields</b></summary><div class="selects"><label for="editField">Field</label><select id="editField">' +
+  // Record pages show only sourced values, with one compact empty state per section.
+  function presentKV(rows) {
+    var kept = rows.map(function (r) { return [r[0], M.val(r[1])]; }).filter(function (r) { return r[1] !== ''; });
+    return kept.length ? kv(kept) : '';
+  }
+  function recordSection(title, body, empty) {
+    return '<section class="card record-section" data-section="' + esc(title) + '"><h2>' + esc(title) + '</h2>' +
+      (body || '<p class="muted">' + esc(empty || 'Nothing connected yet.') + '</p>') + '</section>';
+  }
+  function recordItem(body) { return '<div class="record-item">' + body + '</div>'; }
+  function docLinks(docs) {
+    return (docs || []).map(function (d) { return recordItem((d.url ? ext(d.url, d.title || 'Document') : esc(d.title)) + (d.status ? ' · ' + esc(d.status) : '')); }).join('');
+  }
+  function caseEditor(s) {
+    return '<details class="record-item"><summary>Edit case fields</summary><div class="selects"><label for="editField">Field</label><select id="editField">' +
       s.fields.map(function (f) { return opt(f.k, f.k + (f.v ? ' (' + f.v.slice(0, 30) + ')' : ''), false); }).join('') + '</select><label for="editValue">New value</label><input id="editValue" class="field" autocomplete="off"></div>' +
       '<button class="btn secondary" type="button" data-act="case-edit" data-id="' + esc(s.id) + '" style="margin-top:10px">Save field</button><p class="muted">Changes the Case Board only; the roster is never written.</p></details>';
+  }
+  function recordBilling(match) {
+    if (S.loading.billing || !S.billing) return '<p class="muted">Loading billing…</p>';
+    if (!S.billing.available) return '<p class="muted">' + esc(S.billing.reason || 'Billing source is not connected.') + '</p>';
+    var rows = [];
+    S.billing.batches.forEach(function (b) { b.lines.forEach(function (l, i) { if (!match(l)) return;
+      var r = b.review[i] || {}, state = STATE[r.state] || STATE.needs_review;
+      rows.push(recordItem('<a href="#/billing/' + encodeURIComponent(b.id) + '">' + esc(b.id) + '</a> ' + pill(state[0], state[1]) +
+        presentKV([['Date', l.date], ['Student', l.student], ['Provider', l.provider], ['Service', l.service], ['Duration', l.duration_min != null ? l.duration_min + ' min' : ''], ['Units', l.units], ['Review', b.audit.status]]) +
+        (r.reasons && r.reasons.length ? '<p class="muted">' + r.reasons.map(esc).join(' · ') + '</p>' : '')));
+    }); });
+    return rows.length ? '<p class="muted">Read-only analysis. Open a batch for the separate billing review.</p>' + rows.join('') : '';
+  }
+  function clinicalSummary(notes, href, attrs) {
+    if (S.loading.clinical || !S.clinical) return '<p class="muted">Loading clinical data…</p>';
+    if (!S.clinical.available) return '<p class="muted">' + esc(S.clinical.reason) + '</p>';
+    if (!notes.length) return '<p class="muted">No clinical notes connected for this record.</p>';
+    return '<p><a href="' + href + '"' + (attrs || '') + '>' + notes.length + ' clinical note' + (notes.length === 1 ? '' : 's') + '</a></p>' +
+      notes.slice(0, 5).map(function (n) { return recordItem('<a href="#/note/' + encodeURIComponent(n.id) + '">' + esc(n.date + (n.service ? ' · ' + n.service : '')) + '</a>' +
+        '<div class="muted">' + esc(n.student + (n.provider ? ' · ' + n.provider : '')) + '</div><div class="note-body clamp">' + esc(n.text) + '</div>'); }).join('');
+  }
+  ROUTES.student = function () {
+    var s = M.student(S.P, S.params[0]); if (!s) return head('Student', '#/students', 'Students') + '<div class="list-empty">Student not found.</div>';
+    ensureClinical(); ensureBilling();
+    var h = head(s.name, '#/students', 'Students'), c = s.chart || {};
+    if (s.duplicateId || s.sameNameIds.length) h += warn('Another record has the same name (' + esc(s.sameNameIds.join(', ')) + '). Records are kept separate.');
+    var child = presentKV([['Name', s.name], ['OSIS', s.osis || c.osis], ['Date of birth', c.dob], ['Age', c.age], ['Parent / guardian', s.family.join('; ') || M.val(s.fieldMap['Parent contact'])],
+      ['Guardian address', c.address], ['School', c.school], ['District', s.district || c.district], ['Attends school', c.attends], ['Setting', s.setting], ['Service location', c.location]]);
+    var items = S.P.queue.filter(function (x) { return x.case_id === s.id && x.status === 'draft'; });
+    if (items.length) child += '<p><a href="#/email/' + encodeURIComponent(s.id) + '">' + items.length + ' open item' + (items.length === 1 ? '' : 's') + '</a></p>';
+    h += recordSection('Child info', child, 'No child details connected.');
+    var cases = s.caseRecords.map(function (r) {
+      return recordItem('<h3>' + esc(r.number ? 'Case # ' + r.number : 'Case record') + '</h3>' + presentKV([
+        ['Record ID', r.recordId], ['Service / discipline', r.service], ['Status', r.status], ['Assigned provider', r.provider], ['Authorization starts', r.authStart], ['Authorization ends', r.authEnd],
+        ['Authorized hours', r.hours], ['Authorized units', r.units], ['Frequency', r.frequency], ['Rate', r.rate], ['Funding source', r.funding]]) + (r.source ? '<p class="src">' + esc(r.source) + '</p>' : ''));
+    }).join('');
+    h += recordSection('Cases', cases + caseEditor(s), 'No case records connected.');
+    var team = S.P.providers.filter(function (p) { return p.cases.some(function (x) { return x.case_id === s.id; }); }).map(function (p) {
+      var roles = p.cases.filter(function (x) { return x.case_id === s.id; }).map(function (x) { return x.role; }).filter(Boolean);
+      return recordItem('<a href="#/provider/' + esc(p.key) + '">' + esc(p.name) + '</a>' + presentKV([['Discipline', roles.join(' · ')], ['Phone', p.phone], ['Email', p.email]]));
+    }).join('');
+    if (s.related.length) team += '<p class="muted">Related services: ' + esc(s.related.join('; ')) + '</p>';
+    if (s.openRoles.length) team += '<p>' + pill('Open: ' + s.openRoles.join(', '), 'warn') + '</p>';
+    if (s.departed.length) team += '<p class="muted">Left the case: ' + esc(s.departed.join(', ')) + '</p>';
+    h += recordSection('Providers', team, 'No providers connected.');
+    var schedule = s.assignments.map(function (a) {
+      return recordItem('<b>' + esc(a.role || 'Service') + '</b>' + presentKV([['Provider', a.open ? 'Unstaffed' : a.provider], ['Schedule', a.schedule], ['Mandate (h/week)', a.mandate], ['Setting', a.setting], ['Status', a.status]]));
+    }).join('');
+    // Chart schedule has its own provenance; it is not evidence of delivered sessions.
+    schedule += presentKV([['Chart schedule', c.schedule], ['Chart hours / week', c.hours]]);
+    h += recordSection('Schedule', schedule, 'No schedule connected.');
+    h += recordSection('Billing', recordBilling(function (l) { return l.case_id === s.id && l.case_status === 'matched'; }), 'No billing lines for this child.');
+    var it = s.intake, en = s.ensora, docs = docLinks(s.documents);
+    if (it) docs += presentKV([['Intake status', it.status], ['Received', it.received], ['Missing documents', it.missing]]) + it.links.map(function (u, i) { return '<p>' + ext(u, 'Document folder ' + (i + 1)) + '</p>'; }).join('');
+    if (en) docs += presentKV([['Ensora records', en.data], ['Last capture', en.last], ['Missing records', en.missing]]) + (en.sourceUrl ? '<p>' + ext(en.sourceUrl, 'Ensora source') + '</p>' : '');
+    S.P.reports.filter(function (r) { return r.scope === s.name; }).forEach(function (r) { docs += recordItem('<a href="#/report/' + encodeURIComponent(r.id) + '">' + esc(r.title) + '</a> ' + pill(r.status, r.status === 'draft' ? 'warn' : '')); });
+    h += recordSection('Documents', docs, 'No documents connected.');
+    var notes = S.clinical && S.clinical.available ? M.filterNotes(S.clinical.notes, { caseId: s.id }) : [];
+    var clinical = presentKV([['Goals', s.goals]]) + clinicalSummary(notes, '#/notes/' + encodeURIComponent(s.id));
+    clinical += '<details class="record-item"><summary>Case history & notes</summary><p class="muted">Case notes and edits, separate from clinical notes.</p>' +
+      s.caseLog.slice(0, 8).map(function (n) { return '<div style="margin-top:8px"><span class="src">' + esc(n.ts.slice(0, 10)) + ' · ' + esc(n.type) + '</span><div class="note-body">' + esc(n.text) + '</div></div>'; }).join('') +
+      '<textarea id="caseNote" class="field" rows="2" placeholder="Add a case note"></textarea><button class="btn secondary" type="button" data-act="case-note" data-id="' + esc(s.id) + '">Save note</button></details>';
+    h += recordSection('Clinical Data', clinical, 'No clinical data connected.');
     return h;
   };
 
@@ -245,15 +287,22 @@
   ROUTES.provider = function () {
     var p = S.P.providers.filter(function (x) { return x.key === S.params[0]; })[0];
     if (!p) return head('Provider', '#/providers', 'Providers') + '<div class="list-empty">Provider not found.</div>';
-    if (!S.clinical) ensureClinical();
+    ensureClinical(); ensureBilling();
     var h = head(p.name, '#/providers', 'Providers');
-    h += card(kv([['Roles', p.roles.join(', ')], ['Phone', p.phone], ['Email', p.email], ['Provider ID', p.provider_id]]) + '<div class="src">Sources: ' + esc(p.sources.join(', ')) + '</div>');
-    h += '<div class="sec">Cases & schedules</div>';
-    p.cases.forEach(function (c) { h += card('<b><a href="#/student/' + encodeURIComponent(c.case_id) + '">' + esc(c.student) + '</a></b> · ' + esc(c.role) + '<div class="muted">' + (c.schedule ? esc(c.schedule) : 'No schedule on file') + (c.mandate ? ' · mandate ' + esc(c.mandate) + ' h/wk' : '') + (c.status ? ' · ' + esc(c.status) : '') + '</div>'); });
-    if (S.clinical && S.clinical.available) {
-      var n = S.clinical.notes.filter(function (x) { return x.providerKey === p.key; });
-      h += '<p><a href="#/notes" data-act="notes-by-provider" data-key="' + esc(p.key) + '">' + n.length + ' clinical note' + (n.length === 1 ? '' : 's') + ' by this provider</a></p>';
-    }
+    h += recordSection('Provider info', presentKV([['Name', p.name], ['Discipline', p.roles.join(', ')], ['Phone', p.phone], ['Email', p.email], ['Provider ID', p.provider_id],
+      ['Credentials', p.credentials], ['Rate', p.rate], ['Hours', p.hours], ['SSN (last 4 only)', p.ssn]]));
+    var roster = p.cases.map(function (c) { return recordItem('<b><a href="#/student/' + encodeURIComponent(c.case_id) + '">' + esc(c.student) + '</a></b>' +
+      presentKV([['Discipline', c.role], ['Schedule', c.schedule], ['Mandate (h/week)', c.mandate], ['Status', c.status], ['Setting', c.setting]])); }).join('');
+    h += recordSection('Case roster & schedule', roster, 'No case roster or schedule connected.');
+    h += recordSection('Billing sheets', recordBilling(function (l) {
+      // Prefer IDs; a name-only match must resolve uniquely to avoid mixing providers.
+      return l.provider_id && p.provider_id ? l.provider_id === p.provider_id : (M.findProvider(S.P.providers, l.provider) || {}).key === p.key;
+    }), 'No billing lines for this provider.');
+    var docs = docLinks(p.documents);
+    S.P.reports.filter(function (r) { return r.kind === 'provider' && r.scope === p.name; }).forEach(function (r) { docs += recordItem('<a href="#/report/' + encodeURIComponent(r.id) + '">' + esc(r.title) + '</a>'); });
+    h += recordSection('Documents', docs, 'No provider documents connected.');
+    var notes = S.clinical && S.clinical.available ? S.clinical.notes.filter(function (x) { return x.providerKey === p.key; }) : [];
+    h += recordSection('Clinical data', clinicalSummary(notes, '#/notes', ' data-act="notes-by-provider" data-key="' + esc(p.key) + '"'), 'No clinical notes for this provider.');
     return h;
   };
 

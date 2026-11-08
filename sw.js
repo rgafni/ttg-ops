@@ -1,7 +1,7 @@
 /* App shell cache only. API responses (case data) are NEVER cached: they are cross-origin POSTs.
    Requests with a query string (e.g. a ?k= admin link) are never written to the cache; shell files are stored
    under their clean path only. Bumping V deletes every older cache (including any entry an older version kept). */
-var V = 'ttgops-v9', SHELL = [
+var V = 'ttgops-v10', SHELL = [
   './', 'index.html', 'app.css', 'app.js', 'boot.js', 'config.js', 'model.js', 'billing-core.js',
   'fixtures/v4-sample.js', 'fixtures/fake-api.js', 'install.js', 'install.css', 'manifest.webmanifest', 'icons/icon-192.png'
 ];

@@ -12,7 +12,7 @@
 
   function str(v) { return v == null ? '' : String(v).trim(); }
   /** Source placeholders such as "[no source]" mean "not on file". */
-  function val(v) { v = str(v); return /^\[(no source|blank|none listed)\]$/i.test(v) ? '' : v; }
+  function val(v) { v = str(v); return /^(\[(no source|blank|none listed)\]|not on file|n\/a)$/i.test(v) ? '' : v; }
   /** Only plain https links are ever rendered. */
   function safeUrl(u) {
     u = str(u); if (!/^https:\/\/[^\s"'<>`]+$/i.test(u)) return '';
@@ -22,6 +22,29 @@
   function hkey(s) { var h = 0x811c9dc5; s = String(s); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h * 0x01000193) >>> 0; } return ('0000000' + h.toString(16)).slice(-8); }
   function uniq(a) { return a.filter(function (x, i) { return x && a.indexOf(x) === i; }); }
   function byStr(k) { return function (a, b) { a = str(a[k]).toLowerCase(); b = str(b[k]).toLowerCase(); return a < b ? -1 : a > b ? 1 : 0; }; }
+
+  // Optional source fields are used only when supplied; never infer case numbers or financial values.
+  function maskSSN(v) {
+    var d = str(v).replace(/[^0-9]/g, '');
+    return /^(?:[0-9]{4}|[0-9]{9})$/.test(d) ? '***-**-' + d.slice(-4) : '';
+  }
+  function documents(a) {
+    return (Array.isArray(a) ? a : []).map(function (d) {
+      return { title: val(d.title), url: safeUrl(d.url), status: val(d.status) };
+    }).filter(function (d) { return d.title || d.url; });
+  }
+  function caseRecords(c) {
+    // service_cases is an optional structured source; the current API only exposes a case record ID.
+    // Never group records by student name, and never turn assignments into invented authorizations.
+    var records = Array.isArray(c.service_cases) && c.service_cases.length ? c.service_cases : [
+      { record_id: c.id, service: (c.assignments || []).map(function (a) { return val(a.role); }).filter(Boolean).join(' · '), auth_end: (c.bank || {}).expiry, source: 'Case Board / roster record. Separate case numbers, rates and full authorization details are not connected.' }
+    ];
+    return records.map(function (r) { return {
+      number: val(r.case_number), recordId: val(r.record_id), service: val(r.service), status: val(r.status), provider: val(r.provider),
+      authStart: val(r.auth_start), authEnd: val(r.auth_end), hours: val(r.authorized_hours), units: val(r.authorized_units),
+      frequency: val(r.frequency), rate: val(r.rate), funding: val(r.funding_source), source: val(r.source)
+    }; });
+  }
 
   /* ---------- providers ---------- */
   function providerIndex(cases, chartSync) {
@@ -42,6 +65,13 @@
       if (id) byId[id] = p;
       return p;
     }
+    function info(p, src) {
+      if (!p) return;
+      ['rate', 'hours', 'credentials'].forEach(function (k) { if (!p[k]) p[k] = val(src[k]); });
+      if (!p.ssn) p.ssn = maskSSN(src.ssn_last4 || src.ssn);
+      if (!p.documents) p.documents = [];
+      documents(src.documents).forEach(function (d) { if (!p.documents.some(function (x) { return x.url === d.url && x.title === d.title; })) p.documents.push(d); });
+    }
     function link(p, c, role, extra, source) {
       if (!p) return;
       if (role && p.roles.indexOf(role) < 0) p.roles.push(role);
@@ -52,19 +82,20 @@
     }
     (cases || []).forEach(function (c) {
       (c.team || []).forEach(function (m) {
-        if (m.role === 'Parent' || m.role === 'Related service') return;
-        var p = get(m.name, m.provider_id); if (!p) return;
+        if (/^(parent|guardian|related service)$/i.test(m.role)) return;
+        var p = get(m.name, m.provider_id); if (!p) return; info(p, m);
         if (!p.phone && m.phone) p.phone = m.phone; if (!p.email && m.email) p.email = m.email;
         link(p, c, m.role, {}, 'Case roster');
       });
       (c.assignments || []).forEach(function (a) {
-        if (/^(tbd|open|unassigned|vacant|none|n\/a|\?)$/i.test(str(a.provider))) return;
+        if (/^(parent|guardian)$/i.test(str(a.role)) || /^(tbd|open|unassigned|vacant|none|n\/a|\?)$/i.test(str(a.provider))) return;
         var p = get(a.provider, a.provider_id);
         link(p, c, a.role, { schedule: val(a.schedule), mandate: val(a.mandate), status: val(a.status), setting: val(a.setting) }, 'Provider Hub assignments');
       });
     });
     ((chartSync && chartSync.providers) || []).forEach(function (cp) {
-      var p = get(cp.name, cp.provider_id); if (!p) return;
+      if (/^(parent|guardian)$/i.test(str(cp.discipline))) return;
+      var p = get(cp.name, cp.provider_id); if (!p) return; info(p, cp);
       if (!p.phone && cp.phone) p.phone = cp.phone; if (!p.email && cp.email) p.email = cp.email;
       if (cp.discipline && p.roles.indexOf(cp.discipline) < 0) p.roles.push(cp.discipline);
       if (p.sources.indexOf('Student chart') < 0) p.sources.push('Student chart');
@@ -94,20 +125,20 @@
     cases.forEach(function (c) { idCount[c.id] = (idCount[c.id] || 0) + 1; var k = normName(c.student); (nameGroups[k] = nameGroups[k] || []).push(c.id); });
     var students = cases.map(function (c) {
       var team = c.team || [], f = c.fields || {};
-      var direct = team.filter(function (m) { return m.role !== 'Parent' && m.role !== 'Related service' && m.role !== 'BCBA'; });
-      var asg = (c.assignments || []).map(function (a) { return { provider: str(a.provider), provider_id: str(a.provider_id), role: str(a.role), setting: val(a.setting), schedule: val(a.schedule), mandate: val(a.mandate), auth_expiry: val(a.auth_expiry), status: val(a.status), notes: val(a.notes), open: /^(tbd|open|unassigned|vacant|none|n\/a|\?)$/i.test(str(a.provider)) }; });
+      var direct = team.filter(function (m) { return !/^(parent|guardian|related service|bcba)$/i.test(m.role); });
+      var asg = (c.assignments || []).filter(function (a) { return !/^(parent|guardian)$/i.test(str(a.role)); }).map(function (a) { return { provider: str(a.provider), provider_id: str(a.provider_id), role: str(a.role), setting: val(a.setting), schedule: val(a.schedule), mandate: val(a.mandate), auth_expiry: val(a.auth_expiry), status: val(a.status), notes: val(a.notes), open: /^(tbd|open|unassigned|vacant|none|n\/a|\?)$/i.test(str(a.provider)) }; });
       var fields = EDITABLE.filter(function (k) { return k in f; }).map(function (k) { return { k: k, v: val(f[k]) }; });
       var intake = c.intake ? { status: val(c.intake.status), received: val(c.intake.received), missing: val(c.intake.missing), last: val(c.intake.last), who: val(c.intake.who),
         links: (c.intake.links || []).map(safeUrl).filter(Boolean) } : null;
       var ensora = c.ensora ? { use: val(c.ensora.use), data: val(c.ensora.data), last: val(c.ensora.last), source: val(c.ensora.source), sourceUrl: safeUrl(c.ensora.source), missing: val(c.ensora.missing) } : null;
       var chart = c.chart ? { dob: val(c.chart.dob), age: c.chart.age, school: val(c.chart.school), attends: val(c.chart.attends_school), location: val(c.chart.service_location),
-        schedule: val(c.chart.schedule), hours: val(c.chart.hours_week), address: val(c.chart.guardian_address), provider: c.chart.provider || null } : null;
+        schedule: val(c.chart.schedule), hours: val(c.chart.hours_week), address: val(c.chart.guardian_address), osis: val(c.chart.osis || c.osis), district: val(c.chart.district || c.district), provider: c.chart.provider ? { name: val(c.chart.provider.name), provider_id: val(c.chart.provider.provider_id) } : null } : null;
       return {
         id: str(c.id), name: str(c.student) || str(c.id), source: c.source === 'board' ? 'Case Board' : 'Case roster', setting: val(c.setting),
-        health: c.health || {}, why: val(c.why),
+        health: c.health || {}, why: val(c.why), osis: val(c.osis), district: val(c.district), caseRecords: caseRecords(c), documents: documents(c.documents), goals: val(c.goals),
         bcba: team.filter(function (m) { return m.role === 'BCBA'; }).map(function (m) { return { name: str(m.name), key: (findProvider(providers, m.name) || {}).key || '' }; }),
         providers: direct.map(function (m) { var p = findProvider(providers, m.name); return { name: str(m.name), role: str(m.role), key: p ? p.key : '' }; }),
-        family: team.filter(function (m) { return m.role === 'Parent'; }).map(function (m) { return str(m.name); }),
+        family: team.filter(function (m) { return /^(parent|guardian)$/i.test(m.role); }).map(function (m) { return [val(m.name), val(m.phone), val(m.email)].filter(Boolean).join(' · '); }),
         related: team.filter(function (m) { return m.role === 'Related service'; }).map(function (m) { return str(m.name); }),
         departed: (c.departed || []).map(function (d) { return str(d.name) + (d.role ? ' (' + d.role + ')' : ''); }),
         openRoles: uniq((c.open_roles || []).map(str)), gaps: (c.gaps || []).map(function (g) { return { role: str(g.role), since: str(g.since), days: g.days }; }),
@@ -245,7 +276,7 @@
     return out;
   }
 
-  var api = { EDITABLE: EDITABLE, val: val, safeUrl: safeUrl, hkey: hkey, providerIndex: providerIndex, findProvider: findProvider,
+  var api = { maskSSN: maskSSN, documents: documents, caseRecords: caseRecords, EDITABLE: EDITABLE, val: val, safeUrl: safeUrl, hkey: hkey, providerIndex: providerIndex, findProvider: findProvider,
     normalizeBootstrap: normalizeBootstrap, student: student, queueGroups: queueGroups, normalizeClinical: normalizeClinical,
     filterNotes: filterNotes, noteProviders: noteProviders, buildReportDraft: buildReportDraft, searchAll: searchAll, reviewItems: reviewItems,
     normName: normName, normService: normService };

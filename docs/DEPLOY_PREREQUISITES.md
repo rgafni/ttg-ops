@@ -39,3 +39,29 @@ Source tab columns:
 Phone smoke test with the admin link: Home, one student, notes filters, one billing batch (check a line, then confirm it
 appears in the Billing Audit tab), a notes-based draft, one open item (edit only). Never paste keys or real data into issues
 or screenshots.
+
+## Record page structure (student/provider redesign)
+Student records now show Child info, Cases, Providers, Schedule, Billing, Documents,
+and Clinical Data. Provider records show Provider info, Case roster & schedule,
+Billing sheets, Documents, and Clinical data. Empty values are omitted. Case edits
+remain in a collapsed control; case-history notes remain available. Billing snippets
+on record pages are read-only and link to the existing, unchanged review workflow.
+
+Current backend fields provide DOB/age, guardian address, family contact text,
+school/setting, assigned provider contacts/discipline, schedules/mandates, and an
+authorization expiry. They do **not** provide OSIS, district, provider SSN/rate/hours/
+credentials/docs, or distinct numbered service-case authorizations (start dates,
+authorized hours/units, frequency, rates, funding). There is no itemized live billing
+feed. Goals also have no connected source. This frontend change does not deploy or
+change the backend and never fills those gaps from names, counts or hour banks.
+
+The model accepts optional explicitly supplied `osis`, `district`, `goals`,
+`documents: [{title,url,status}]`, and `service_cases: [{case_number,record_id,service,
+auth_start,auth_end,authorized_hours,authorized_units,frequency,rate,funding_source,
+provider,status,source}]` on a case record. It never groups students by name to
+assemble these cards. Without service_cases it displays the existing record ID,
+service disciplines and authorization expiry, not a fabricated case number.
+Provider team/chart entries may explicitly supply `rate`, `hours`, `credentials`,
+`documents`, and `ssn_last4`/`ssn`; normalized SSN retains only `***-**-1234`, no reveal.
+Only synthetic fixtures currently exercise these optional fields. A future live
+adapter/data-source change needs separate approval. Nothing is added to URL/storage.
