@@ -387,7 +387,7 @@ test('REGRESSION SW: requests with a query (e.g. ?k=) are never cached; shell ca
   await flush();
   assert.ok(!puts.some(p => /\?|SECRET/.test(p)), 'cached a query URL: ' + puts);
   assert.deepStrictEqual(puts, ['https://rgafni.github.io/ttg-ops/app.js']);
-  assert.match(read('sw.js'), /ttgops-v15/);
+  assert.match(read('sw.js'), /ttgops-v16/);
   assert.ok(read('app.js').includes("navigator.serviceWorker.register('sw.js')"), 'app must register the new worker so old caches are purged');
 });
 /* Student/provider record redesign. Optional fields (OSIS, case numbers, rates, SSN) are NOT sent by the live API today, so the
@@ -660,7 +660,7 @@ test('calls card: live Home has the slot (below Needs your review) and loads its
   await t.go('#/'); assert.match(t.html, /id="callsSlot"/);
   const view = t.sb.document.querySelector('#view'); view.querySelector = sel => (sel === '#callsSlot' ? {} : null);
   await t.go('#/review'); await t.go('#/'); await flush();
-  assert.deepStrictEqual(t.scripts, ['calls-card.js?v=2']); assert.ok(t.html.indexOf('Needs your review') < t.html.indexOf('callsSlot'), 'card sits below Needs your review');
+  assert.deepStrictEqual(t.scripts, ['calls-card.js?v=3']); assert.ok(t.html.indexOf('Needs your review') < t.html.indexOf('callsSlot'), 'card sits below Needs your review');
   assert.ok(!t.fetches.some(f => /AKfycbzi_/.test(f.u)), 'the host app itself never calls the Calls API');
   for (const r of ['#/review', '#/students', '#/notes', '#/providers', '#/billing', '#/reports', '#/email', '#/settings']) { await t.go(r); assert.doesNotMatch(t.html, /callsSlot/, r); }
 });

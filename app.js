@@ -107,7 +107,7 @@
     if (window.CallsCard) { window.CallsCard.mount(slot, 'ttg'); return; }
     if (S._ccLoad) return; S._ccLoad = true;
     try {
-      var t = document.createElement('script'); t.src = 'calls-card.js?v=2';   // own copy (same file as /hub/calls-card.js), so no other repo's code runs next to the admin key
+      var t = document.createElement('script'); t.src = 'calls-card.js?v=3';   // own copy (same file as /hub/calls-card.js), so no other repo's code runs next to the admin key
       t.onload = function () { if (S.mode === 'live' && S.route === 'home' && window.CallsCard) { var sl = view.querySelector('#callsSlot'); if (sl) window.CallsCard.mount(sl, 'ttg'); } };
       t.onerror = function () { S._ccLoad = false; };
       document.head.appendChild(t);

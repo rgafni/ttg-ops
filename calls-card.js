@@ -188,7 +188,7 @@
       (it ? '<p class="cc-p">Set for ' + esc(when(it.at)) + '</p>' : '') +
       (edit ? chips('day', [['today', 'Today'], ['tomorrow', 'Tomorrow']], day) + timeSelect(t) +
         (p.ask ? '<input class="cc-in" id="ccAsk" maxlength="150" placeholder="' + esc(p.ask) + '" value="' + esc(extra(p, it)) + '">' : '') +
-        '<p class="cc-note">Katya does not call on Shabbat or Yom Tov.</p>' : '<p class="cc-note">Scheduled calls are off. Turn them on in Calls.</p>') +
+        '' : '<p class="cc-note">Scheduled calls are off. Turn them on in Calls.</p>') +
       '<p class="cc-err" id="ccErr" hidden></p>' +
       (it ? '<button type="button" class="cc-quiet" data-off>Turn off this call</button>' : '') +
       '<div class="cc-actions"><button type="button" class="cc-btn cc-btn-g" data-close>' + (edit ? 'Cancel' : 'Close') + '</button>' + (edit ? '<button type="button" class="cc-btn cc-btn-p" data-save>Save</button>' : '') + '</div>',
