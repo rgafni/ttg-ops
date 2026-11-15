@@ -23,7 +23,7 @@
   function uniq(a) { return a.filter(function (x, i) { return x && a.indexOf(x) === i; }); }
   function byStr(k) { return function (a, b) { a = str(a[k]).toLowerCase(); b = str(b[k]).toLowerCase(); return a < b ? -1 : a > b ? 1 : 0; }; }
 
-  // Optional source fields are used only when supplied; never infer case numbers or financial values.
+  // Optional source fields are used only when supplied; never infer financial values. Case numbers are never shown (Roni, Nov 15: billing staff need them, this app does not).
   function maskSSN(v) {
     var d = str(v).replace(/[^0-9]/g, '');
     return /^(?:[0-9]{4}|[0-9]{9})$/.test(d) ? '***-**-' + d.slice(-4) : '';
@@ -40,7 +40,7 @@
       { record_id: c.id, service: (c.assignments || []).map(function (a) { return val(a.role); }).filter(Boolean).join(' · '), auth_end: (c.bank || {}).expiry, source: 'Case Board / roster record. Separate case numbers, rates and full authorization details are not connected.' }
     ];
     return records.map(function (r) { return {
-      number: val(r.case_number), recordId: val(r.record_id), service: val(r.service), status: val(r.status), provider: val(r.provider),
+      recordId: val(r.record_id), service: val(r.service), status: val(r.status), provider: val(r.provider),
       authStart: val(r.auth_start), authEnd: val(r.auth_end), hours: val(r.authorized_hours), units: val(r.authorized_units),
       frequency: val(r.frequency), rate: val(r.rate), funding: val(r.funding_source), source: val(r.source)
     }; });

@@ -75,7 +75,7 @@
     M.students.forEach(function (s) {
       s.lines.forEach(function (l) { if (l.status === 'Unstaffed') add('unstaffed', { s: s, href: '#/students/' + s.id + '/services', title: s, text: Jw([esc(l.svc) + ' open', l.since ? 'since ' + fd(l.since) : '']), right: l.days != null ? plural(l.days, 'day') : '', sort: -(l.days || 0) }); });
       if (s.health) { var reds = ['relationship', 'service', 'clinical', 'billing'].filter(function (k) { return s.health[k] === 'red'; }); if (reds.length) add('red', { s: s, href: '#/students/' + s.id, title: s, text: Jw([reds.map(function (k) { return k[0].toUpperCase() + k.slice(1); }).join(', '), esc(s.why || '')]), right: '', sort: -reds.length }); }
-      s.banks.forEach(function (b) { var rem = b.auth - b.used; if (b.auth && rem / b.auth < 0.2) add('banks', { s: s, href: '#/students/' + s.id + '/services', title: s, text: Jw([esc(b.svc), esc(b.caseNo)]), right: hrs(rem) + ' of ' + hrs(b.auth) + ' hrs left', sort: rem / b.auth }); });
+      s.banks.forEach(function (b) { var rem = b.auth - b.used; if (b.auth && rem / b.auth < 0.2) add('banks', { s: s, href: '#/students/' + s.id + '/services', title: s, text: esc(b.svc), right: hrs(rem) + ' of ' + hrs(b.auth) + ' hrs left', sort: rem / b.auth }); });
       if (M.mode === 'live' && s.lines.some(function (l) { return l.svc === 'ABA' && l.status !== 'Unstaffed'; }) && !s.lines.some(function (l) { return l.svc === 'BCBA' && l.status !== 'Unstaffed'; })) add('nobcba', { s: s, href: '#/students/' + s.id, title: s, text: 'ABA with no supervising BCBA', right: '', sort: 0 });
       if (s.docs) s.docs.forEach(function (d) { if (/^(Requested|Awaiting signature)$/.test(d.status)) add('docs', { s: s, href: '#/students/' + s.id + '/doc/' + d.id, title: s, text: esc(d.name), right: '', chip: stp(d.status), sort: 0 }); });
       if (s.checklist) { var open = s.checklist.filter(function (c) { return !c.done; }); if (open.length) add('intake', { s: s, href: '#/students/' + s.id + '/records', title: s, text: esc(open.map(function (c) { return c.item; }).join(', ')), right: plural(open.length, 'item'), sort: -open.length }); }
@@ -124,7 +124,7 @@
     var S = M.students, n = S.length;
     var rows = [['Date of birth', function (s) { return s.dob; }], ['School', function (s) { return s.school; }], ['Guardian contact', function (s) { return s.guardianPhone || s.guardianEmail; }], ['Weekly hours', function (s) { return s.hrsWk != null; }],
       ['Schedule', function (s) { return s.lines.some(function (l) { return l.slots.length; }); }], ['BCBA', function (s) { return s.bcba; }], ['Hour bank', function (s) { return s.banks.length; }], ['Auth dates', function (s) { return s.lines.some(function (l) { return l.end; }); }],
-      ['Case number', function (s) { return s.caseNo; }], ['Intake papers', function (s) { return s.intake ? /^received$/i.test(s.intake.status) : (s.checklist && s.checklist.every(function (c) { return c.done; })); }],
+      ['Intake papers', function (s) { return s.intake ? /^received$/i.test(s.intake.status) : (s.checklist && s.checklist.every(function (c) { return c.done; })); }],
       [M.mode === 'demo' ? 'Ensora profile' : 'Ensora data', function (s) { return s.ensora ? s.ensora.data && !/^none$/i.test(s.ensora.data) : s.checklist && s.checklist.some(function (c) { return /ensora/i.test(c.item) && c.done; }); }]];
     return '<div class="tw2"><table class="cov"><tbody>' + rows.map(function (r) {
       var k = S.filter(function (s) { return r[1](s); }).length, pct = n ? Math.round(k / n * 100) : 0;
@@ -241,7 +241,7 @@
       b += sec('family', 'Guardian', '', kv([['Name', s.guardian], ['Phone', tel(s.guardianPhone), 1], ['Email', mail(s.guardianEmail), 1], ['Address', s.address, 0, M.mode === 'demo' ? 1 : 0], ['Second contact', s.guardian2, 0, 1]]));
       var team = []; s.lines.forEach(function (l) { if (l.pid && !team.some(function (x) { return x.pid === l.pid; })) team.push(l); });
       b += sec('team', 'Team', team.length ? plural(team.length, 'provider') : '', team.length ? '<div class="list">' + team.map(function (l) { var p = prv(l.pid), ls = s.lines.filter(function (x) { return x.pid === l.pid; }); return row('#/providers/' + p.id, av(p), nm(p), rr(esc(ls.map(function (x) { return x.svc; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join(', '))), Jw([ls.some(function (x) { return x.wk != null; }) ? hw(ls.reduce(function (a, x) { return a + (x.wk || 0); }, 0)) : '', p.phone ? '<span class="nw">' + esc(p.phone) + '</span>' : ''])); }).join('') + '</div>' : empty('No providers on file'));
-      b += sec('case', 'Case', '', kv([['Case number', s.caseNo], ['Hearing', s.hearingDate ? fd(s.hearingDate) : ''], ['Order', s.orderDate ? fd(s.orderDate) : ''], ['Outcome', s.outcome], ['Attorney', s.lawyer ? Jw([esc(s.lawyer.name), esc(s.lawyer.firm)]) : '', 1], ['Attorney phone', s.lawyer ? tel(s.lawyer.phone) : '', 1]]));
+      b += sec('case', 'Case', '', kv([['Hearing', s.hearingDate ? fd(s.hearingDate) : ''], ['Order', s.orderDate ? fd(s.orderDate) : ''], ['Outcome', s.outcome], ['Attorney', s.lawyer ? Jw([esc(s.lawyer.name), esc(s.lawyer.firm)]) : '', 1], ['Attorney phone', s.lawyer ? tel(s.lawyer.phone) : '', 1]]));
       if (M.mode === 'live') {
         b += sec('watch', 'Health and live issues', '', kv(health(s.health).concat([['Why', s.why], ['Live issues', s.rosterNotes], ['Source', s.source]])));
       }
@@ -250,13 +250,13 @@
       var tot = s.lines.some(function (l) { return l.wk != null; }) ? hw(s.lines.reduce(function (a, l) { return a + (l.wk || 0); }, 0)) + (M.mode === 'live' ? ' by schedule' : '') : '';
       b += sec('services', 'Service lines', tot, s.lines.length ? s.lines.map(function (l) {
         var p = l.pid && prv(l.pid);
-        return '<div class="svc' + (l.status === 'Unstaffed' ? ' gap' : '') + '"><div class="svh"><b>' + esc(l.svc) + (l.wk != null && M.mode === 'demo' ? DOT + hw(l.wk) : '') + '</b>' + (l.status !== 'Active' ? stp(l.status) : l.ai ? rr(Jw([esc(l.ai), esc(l.caseNo)])) : '') + '</div>' +
+        return '<div class="svc' + (l.status === 'Unstaffed' ? ' gap' : '') + '"><div class="svh"><b>' + esc(l.svc) + (l.wk != null && M.mode === 'demo' ? DOT + hw(l.wk) : '') + '</b>' + (l.status !== 'Active' ? stp(l.status) : l.ai ? rr(esc(l.ai)) : '') + '</div>' +
           kv([['Provider', p ? '<a class="lnk" href="#/providers/' + p.id + '">' + nm(p) + '</a>' : l.status === 'Unstaffed' ? '<span class="bad">Open' + (l.since ? ' since ' + fd(l.since) : '') + '</span>' : '', 1], ['Setting', l.setting], ['Mandate', l.mandate], M.mode === 'live' && l.wk != null ? ['By schedule', hw(l.wk), 1] : null, ['Schedule', l.slots.length ? sched(l.slots) : l.schedText ? esc(l.schedText) : '', 1],
             ['Period', l.start && l.end ? fd(l.start) + ' to ' + fd(l.end) : l.end ? 'Auth expires ' + fd(l.end) : ''], ['Note', l.note, 0, 1]]) + '</div>';
       }).join('') : empty('No services on file'));
       b += sec('banks', 'Hour banks', s.banks.length ? plural(s.banks.length, 'bank') : '', s.banks.length ? '<div class="tw2"><table><thead><tr><th>Service</th><th class="n">Auth</th><th class="n">Used</th><th class="n">Left</th></tr></thead><tbody>' + s.banks.map(function (b2) {
         var rem = b2.auth - b2.used, pct = Math.round(b2.used / b2.auth * 100), low = rem / b2.auth < 0.2;
-        return '<tr class="' + (low ? 'lo' : '') + '"><td>' + esc(b2.svc) + (low ? ' ' + pill('Low', 'bad') : '') + '<small>' + Jw([esc(b2.caseNo), esc(b2.provider)]) + '</small><span class="mbar"><i style="width:' + pct + '%"></i></span></td><td class="n">' + hrs(b2.auth) + '</td><td class="n">' + hrs(b2.used) + '</td><td class="n' + (low ? ' lo' : '') + '"><b>' + hrs(rem) + '</b></td></tr>';
+        return '<tr class="' + (low ? 'lo' : '') + '"><td>' + esc(b2.svc) + (low ? ' ' + pill('Low', 'bad') : '') + '<small>' + esc(b2.provider) + '</small><span class="mbar"><i style="width:' + pct + '%"></i></span></td><td class="n">' + hrs(b2.auth) + '</td><td class="n">' + hrs(b2.used) + '</td><td class="n' + (low ? ' lo' : '') + '"><b>' + hrs(rem) + '</b></td></tr>';
       }).join('') + '</tbody></table></div>' : kv([['Hour bank', ''], ['Hours used', ''], ['Auth expiry', '']]));
     } else if (tab === 'records') {
       if (s.intake) b += sec('intake', 'Intake papers', stp(s.intake.status), kv([['Status', s.intake.status], ['Received', s.intake.received], ['Missing', s.intake.missing], ['Welcome email', s.intake.welcome, 0, 1], ['Last contact', s.intake.last ? fd(s.intake.last) : '', 0, 1], ['Checked', s.intake.updated ? fd(s.intake.updated) : '']]));
@@ -279,7 +279,7 @@
   var docBody = null;
   function vDoc(s, d) {
     if (!docBody && window.SCDOC) docBody = window.SCDOC({ esc: esc, t: t, kv: function (rows) { return kv(rows.map(function (r) { return [r[0], r[1], r[2], 1]; })); }, fd: fd, fds: fd, first: function (n) { return n.split(' ')[0]; }, hrs: hrs, D: window.SC });
-    return '<article class="paper"><div class="ph"><div class="pt">' + esc(d.name) + '</div><div class="pm">' + Jw([esc(s.name), esc(s.caseNo)]) + '</div></div>' +
+    return '<article class="paper"><div class="ph"><div class="pt">' + esc(d.name) + '</div><div class="pm">' + esc(s.name) + '</div></div>' +
       kv([['Student', '<a class="lnk" href="#/students/' + s.id + '">' + nm(s) + '</a>', 1], ['From', Jw([esc(d.by), d.date ? fd(d.date) : 'Not yet signed']), 1], ['Status', stp(d.status), 1]]) + '<div class="pb">' + (docBody ? docBody(s.raw, d) : '') + '</div></article><p class="foot">Sample document, fictional</p>';
   }
 

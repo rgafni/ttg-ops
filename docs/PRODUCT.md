@@ -6,6 +6,8 @@ Written Nov 15 2026 from Roni's own requests (Oct 8 to Nov 7). This page outrank
 Help Roni, as Clinical Director, stay on top of every Together They Grow case: who serves whom and when, what the clinical notes say,
 whether incoming billing matches the record, and what needs his decision. It is an oversight tool. It sends nothing.
 
+Who uses it: Roni only. One owner key; BCBAs, providers and staff never sign in or see anything. "Students by BCBA" is only a way for Roni to sort his own list.
+
 ## Defining moment
 Roni on his phone between other work, wanting the one answer: "Is anything slipping, and what do I need to decide?"
 
@@ -24,3 +26,5 @@ Plus: search, and "Needs your review" in separate sections (messages, reports, b
 - No guessing identities. A note or line that cannot be matched to exactly one record stays apart.
 - No unexplained colors or dots. Words first.
 - No real data in the public repo, the preview, or screenshots.
+- No access for anyone but Roni. No BCBA, provider or staff logins.
+- No case numbers on screen. They stay in the source data for the billing staff who submit to the state.

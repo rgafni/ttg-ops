@@ -387,7 +387,7 @@ test('REGRESSION SW: requests with a query (e.g. ?k=) are never cached; shell ca
   await flush();
   assert.ok(!puts.some(p => /\?|SECRET/.test(p)), 'cached a query URL: ' + puts);
   assert.deepStrictEqual(puts, ['https://rgafni.github.io/ttg-ops/app.js']);
-  assert.match(read('sw.js'), /ttgops-v12/);
+  assert.match(read('sw.js'), /ttgops-v13/);
   assert.ok(read('app.js').includes("navigator.serviceWorker.register('sw.js')"), 'app must register the new worker so old caches are purged');
 });
 /* Student/provider record redesign. Optional fields (OSIS, case numbers, rates, SSN) are NOT sent by the live API today, so the
@@ -412,12 +412,12 @@ test('records: student has exactly seven requested sections in order, no field d
   assert.match(t.html, /2019-03-04/); assert.match(t.html, /DEMO-OSIS-0001/); assert.match(t.html, /Sample School/); assert.match(t.html, /Fictional District/);
   assert.match(t.html, /Parent of Avery/); assert.match(t.html, /id="caseNote"/); assert.match(t.html, /data-act="case-edit"/);
 });
-test('records: one card per explicit case number, distinct authorizations, units and hours are never conflated', async () => {
+test('records: one card per case record, case numbers never shown even when supplied, units and hours are never conflated', async () => {
   const t = bootRich(); await flush();
   const a = t.app.S.P.students.find(x => x.name === 'Avery Demo'); await t.go('#/student/' + a.id);
   assert.equal(a.caseRecords.length, 2);
   const html = t.html.split('data-section="Cases"')[1].split('</section>')[0];
-  assert.match(html, /Case # DEMO-CASE-OT-01/); assert.match(html, /Case # DEMO-CASE-SLP-02/);
+  assert.doesNotMatch(t.html, /DEMO-CASE|Case #|Case number/); assert.ok(!('number' in a.caseRecords[0]));
   assert.match(html, /Authorized hours<\/dt><dd>30/); assert.match(html, /Authorized units<\/dt><dd>24/);
   assert.match(html, /\$50\/hour \(fictional\)/); assert.match(html, /Sample funding/);
   assert.match(html, /2026-09-01/); assert.match(html, /2027-01-05/);
@@ -546,6 +546,10 @@ test('notes: not-linked notes are shown apart with the name as written, never at
   await t.go('#/notes/unlinked'); assert.match(t.html, /Fixture, Riley R\./); assert.match(t.html, /exactly as the source wrote it/);
   await t.go('#/student/' + riley.id); assert.doesNotMatch(t.html, /Manding/);
   t.app.S.q = 'manding'; await t.go('#/search'); assert.match(t.html, /Note \(not linked\)/);
+});
+test('no case numbers on any screen: main app and showcase never render them (data untouched)', () => {
+  for (const f of ['app.js', 'showcase/app.js', 'showcase/demo-docs.js']) assert.doesNotMatch(read(f), /Case number|Case #|caseNo\)|'Case ' \+ s\.caseNo/, f);
+  assert.doesNotMatch(read('model.js'), /number: val\(r\.case_number\)/);
 });
 test('public fixture carries no field the live API does not send (OSIS, case numbers, rates, SSN)', () => {
   const c = FX.bootstrap.cases; assert.ok(c.every(x => !('osis' in x) && !('service_cases' in x) && !('district' in x) && !('goals' in x)));

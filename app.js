@@ -262,7 +262,7 @@
       (s.openRoles.length && !/unstaff/i.test(s.why) ? '<div class="ov-why">Unstaffed: ' + esc(s.openRoles.join(', ')) + '</div>' : '') + '</div>';
     h += recordSection('Child info', child, 'No child details connected.', [c.age != null && c.age !== '' ? 'Age ' + c.age : '', c.school, s.setting].filter(Boolean).join(' · '));
     var cases = s.caseRecords.map(function (r) {
-      return recordItem('<h3>' + esc(r.number ? 'Case # ' + r.number : 'Case record') + '</h3>' + presentKV([
+      return recordItem('<h3>' + 'Case record' + '</h3>' + presentKV([
         ['Record ID', r.recordId], ['Service / discipline', r.service], ['Status', r.status], ['Assigned provider', r.provider], ['Authorization starts', r.authStart], ['Authorization ends', r.authEnd],
         ['Authorized hours', r.hours], ['Authorized units', r.units], ['Frequency', r.frequency], ['Rate', r.rate], ['Funding source', r.funding]]) + (r.source ? '<p class="src">' + esc(r.source) + '</p>' : ''));
     }).join('');

@@ -182,9 +182,9 @@
       { title: 'Progress report, quarter 1', period: 'Sep to Nov 2026', date: '2026-11-20', by: s.lines.some(function (l) { return /ABA/.test(l.svc); }) ? 'Dana Halloway, BCBA' : D.pmap[lead.pid].name + ', ' + D.pmap[lead.pid].role, status: 'Draft', excerpt: REP[s.id][1] }
     ];
     s.hearings = [
-      { date: s.hearingDate, what: 'Impartial hearing', detail: 'Case ' + s.caseNo + '. ' + s.outcome.split('.')[0] + '.', status: 'Held' },
+      { date: s.hearingDate, what: 'Impartial hearing', detail: s.outcome.split('.')[0] + '.', status: 'Held' },
       { date: A('2026-11-30', si % 3 * 7), what: 'Disclosure deadline', detail: 'Progress reports and session logs to ' + s.lawyer.name.replace(', Esq.', ''), status: 'Upcoming' },
-      { date: A('2026-12-08', si * 3), what: 'Implementation status conference', detail: 'Case ' + s.caseNo + ', by video', status: 'Scheduled' }
+      { date: A('2026-12-08', si * 3), what: 'Implementation status conference', detail: 'By video', status: 'Scheduled' }
     ];
     if (s.comp.length) s.hearings.splice(1, 0, { date: A(s.hearingDate, -365), what: 'Prior hearing, comp services', detail: 'Case ' + s.compCase + '. Compensatory bank awarded.', status: 'Held' });
     /* cases and hour banks */

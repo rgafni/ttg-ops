@@ -11,3 +11,6 @@
 - 2026-11-15 Calendar weeks other than this one say plainly that they show today's schedule, because past schedule changes are not recorded. (pass 2)
 - 2026-11-15 A record section with nothing in it is a plain row, not a tappable one that opens to the same sentence. (pass 2)
 - 2026-11-15 Network errors are explained in plain words (offline, server unreachable, slow, unreadable reply); requests time out after 45 seconds and the app retries by itself when the connection returns. (pass 2)
+- 2026-11-15 TTG Ops is for Roni only, not BCBAs. One owner key, checked by the API on every call; no BCBA or staff access. "By BCBA" stays only as a sort of his own student list. (Roni, t3075u)
+- 2026-11-15 No case numbers anywhere on screen (main app and showcase). The data is untouched; case numbers are for the billing staff who submit to the state. (Roni, t3075u)
+- 2026-11-15 The 371 notes not linked to a student stay as they are for now. (Roni, t3075u)
