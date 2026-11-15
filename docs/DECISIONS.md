@@ -7,3 +7,7 @@
 - 2026-11-15 Record sections open only when tapped, each with a one-line summary. (overnight build, from Roni's Oct 13 request; OK pending)
 - 2026-11-15 The public fixture carries only fields the live API sends, so the preview never shows what the live app cannot. (overnight build)
 - 2026-11-15 Notes the API cannot link to exactly one student are shown in their own "Not linked" group with the name as written, never attached. (overnight build, API v11)
+- 2026-11-15 Billing-core wording stays exactly as audited; the screen only rewrites it for reading (drops internal note IDs and "(s)"). (pass 2)
+- 2026-11-15 Calendar weeks other than this one say plainly that they show today's schedule, because past schedule changes are not recorded. (pass 2)
+- 2026-11-15 A record section with nothing in it is a plain row, not a tappable one that opens to the same sentence. (pass 2)
+- 2026-11-15 Network errors are explained in plain words (offline, server unreachable, slow, unreadable reply); requests time out after 45 seconds and the app retries by itself when the connection returns. (pass 2)
