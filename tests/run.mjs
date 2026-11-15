@@ -645,6 +645,11 @@ test('plain copy: open items never show a bare rule code; lists do not repeat th
   await t.go('#/settings'); assert.doesNotMatch(t.html, /(?<!of )\b1 rows\b/); assert.match(t.html, /Not started/);
 });
 
+test('performance: schedules are parsed once per bootstrap, not on every calendar tap', () => {
+  const P = M.normalizeBootstrap(FX.bootstrap); assert.strictEqual(M.weekPlan(P), M.weekPlan(P)); assert.strictEqual(M.providerLoad(P), M.providerLoad(P));
+  const P2 = M.normalizeBootstrap(FX.bootstrap); assert.notStrictEqual(M.weekPlan(P2), M.weekPlan(P)); assert.deepStrictEqual(M.weekPlan(P2), M.weekPlan(P));
+});
+
 for (const [name, fn] of tests) {
   try { await fn(); passed++; console.log('ok', name); }
   catch (e) { failed++; console.log('FAIL', name, '\n   ', e.message.split('\n').slice(0, 6).join('\n    ')); }

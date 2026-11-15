@@ -333,8 +333,15 @@
   function mandateMinutes(m) { var x = str(m).match(/^(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?)?(?:\s*\/\s*(?:wk|week))?$/i); return x ? Math.round(parseFloat(x[1]) * 60) : null; }
   var SUPERVISE = /\b(bcba|supervis|sup\.?|joint|parent training)\b/i;
   /** Weekly plan for every active assignment, with scheduled vs mandate per assignment. */
+  // Cached per schedules array (a new bootstrap makes a new array), so taps on the calendar do not re-parse every schedule.
+  var _wpCache = typeof WeakMap === 'function' ? new WeakMap() : null;
   function weekPlan(P) {
-    return (P.schedules || []).map(function (r) {
+    var src = P.schedules || [];
+    if (_wpCache && _wpCache.has(src)) return _wpCache.get(src);
+    var out = weekPlanRaw(src); if (_wpCache) _wpCache.set(src, out); return out;
+  }
+  function weekPlanRaw(rows) {
+    return rows.map(function (r) {
       var ps = parseSchedule(r.schedule), mins = slotMinutes(ps.slots), man = mandateMinutes(r.mandate);
       return { case_id: r.case_id, student: r.student, provider: r.provider, providerKey: r.providerKey, role: r.role, open: r.open, schedule: r.schedule,
         slots: ps.slots, unparsed: ps.unparsed, minutes: mins, mandateMin: man,
@@ -386,7 +393,13 @@
       notesAvailable: !!notes };
   }
   /** TTG bookings per provider (hours/week and which days). This is not their outside availability, which no source records. */
+  var _plCache = typeof WeakMap === 'function' ? new WeakMap() : null;
   function providerLoad(P) {
+    var src = P.schedules || [];
+    if (_plCache && _plCache.has(src)) return _plCache.get(src);
+    var out = providerLoadRaw(P); if (_plCache) _plCache.set(src, out); return out;
+  }
+  function providerLoadRaw(P) {
     var plan = weekPlan(P), out = {};
     plan.forEach(function (a) {
       if (!a.providerKey) return;
