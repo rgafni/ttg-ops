@@ -257,6 +257,123 @@
     };
   }
 
+  /* ---------- schedules -> calendar ----------
+     Schedules are the free-text strings already on the assignments ("Mon-Fri 3:00-5:00 PM; Sat 10:00 AM-12:00 PM (virtual sup.)").
+     They are parsed strictly. Anything that does not parse is reported back as text, never guessed onto the calendar.
+     A scheduled slot is a plan, not proof of a session; a missing note is never treated as a missed session. */
+  var DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'], DAY_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  function dayIndex(t) { t = str(t).toLowerCase().slice(0, 3); var i = DAYS.indexOf(t); return i; }
+  function parseDays(spec) {
+    // "Mon", "Mon-Fri", "Mon/Wed", "Tue & Thu", "Mon, Wed"
+    var out = [], parts = str(spec).split(/\s*(?:\/|,|&|\band\b)\s*/i).filter(Boolean);
+    for (var i = 0; i < parts.length; i++) {
+      var r = parts[i].match(/^([A-Za-z]{3,9})\s*(?:-|–|to)\s*([A-Za-z]{3,9})$/);
+      if (r) {
+        var a = dayIndex(r[1]), b = dayIndex(r[2]); if (a < 0 || b < 0) return null;
+        for (var d = a, n = 0; n < 7; d = (d + 1) % 7, n++) { out.push(d); if (d === b) break; }
+      } else { var x = dayIndex(parts[i]); if (x < 0 || !/^[A-Za-z]{3,9}\.?$/.test(parts[i])) return null; out.push(x); }
+    }
+    return out.length ? out : null;
+  }
+  function clock(h, m, ap) { h = +h; m = +(m || 0); if (h > 23 || m > 59) return null; if (ap) { ap = ap.toLowerCase(); if (h === 12) h = 0; if (ap === 'pm') h += 12; } return h * 60 + m; }
+  function parseRange(t) {
+    var m = str(t).match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|–|to)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
+    if (!m) return null;
+    var end = clock(m[4], m[5], m[6]), start;
+    if (m[3]) start = clock(m[1], m[2], m[3]);
+    else { start = clock(m[1], m[2], m[6]); if (start != null && end != null && start > end) start = clock(m[1], m[2], m[6].toLowerCase() === 'pm' ? 'am' : 'pm'); }
+    if (start == null || end == null || end <= start) return null;
+    return { start: start, end: end };
+  }
+  function parseSchedule(text) {
+    var slots = [], unparsed = [];
+    str(text).split(/\s*;\s*/).filter(Boolean).forEach(function (seg) {
+      var note = '', s = seg.replace(/\(([^)]*)\)/g, function (_, n) { note += (note ? '; ' : '') + n.trim(); return ' '; }).replace(/\s+/g, ' ').trim();
+      var m = s.match(/^([A-Za-z]{3,9}\.?(?:\s*(?:-|–|\/|,|&|to|and)\s*[A-Za-z]{3,9}\.?)*)\s+(\d.*)$/i);
+      var days = m && parseDays(m[1].replace(/\./g, ''));
+      if (!days) { unparsed.push(seg); return; }
+      // several ranges on one day, each with its own note: "8:00 AM-2:15 PM (school), 2:30-5:30 PM (home)"
+      var pieces = seg.slice(seg.search(/\d/)).split(/\s*,\s*/), ok = [];
+      for (var i = 0; i < pieces.length; i++) {
+        var pn = ''; var body = pieces[i].replace(/\(([^)]*)\)/g, function (_, n) { pn += (pn ? '; ' : '') + n.trim(); return ' '; }).replace(/\s+/g, ' ').trim();
+        var r = parseRange(body); if (!r) { ok = null; break; }
+        ok.push({ start: r.start, end: r.end, note: pn });
+      }
+      if (!ok) { unparsed.push(seg); return; }
+      days.forEach(function (d) { ok.forEach(function (r) { slots.push({ day: d, start: r.start, end: r.end, note: r.note }); }); });
+    });
+    return { slots: slots, unparsed: unparsed };
+  }
+  function slotMinutes(slots) { return (slots || []).reduce(function (a, s) { return a + (s.end - s.start); }, 0); }
+  function hhmm(min) { var h = Math.floor(min / 60), m = min % 60, ap = h >= 12 ? 'PM' : 'AM', h12 = h % 12 || 12; return h12 + (m ? ':' + ('0' + m).slice(-2) : '') + ' ' + ap; }
+  function timeRange(s) { var a = hhmm(s.start), b = hhmm(s.end); if (a.slice(-2) === b.slice(-2)) a = a.slice(0, -3); return a + '–' + b; }
+  function fmtHours(min) { var h = Math.round(min / 6) / 10; return (h % 1 ? h.toFixed(1) : String(h)) + ' h'; }
+  function mandateMinutes(m) { var x = str(m).match(/^(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?)?(?:\s*\/\s*(?:wk|week))?$/i); return x ? Math.round(parseFloat(x[1]) * 60) : null; }
+  var SUPERVISE = /\b(bcba|supervis|sup\.?|joint|parent training)\b/i;
+  /** Weekly plan for every active assignment, with scheduled vs mandate per assignment. */
+  function weekPlan(P) {
+    return (P.schedules || []).map(function (r) {
+      var ps = parseSchedule(r.schedule), mins = slotMinutes(ps.slots), man = mandateMinutes(r.mandate);
+      return { case_id: r.case_id, student: r.student, provider: r.provider, providerKey: r.providerKey, role: r.role, open: r.open, schedule: r.schedule,
+        slots: ps.slots, unparsed: ps.unparsed, minutes: mins, mandateMin: man,
+        vsMandate: man == null || !ps.slots.length || ps.unparsed.length ? '' : mins < man - 5 ? 'under' : mins > man + 5 ? 'over' : 'match' };
+    });
+  }
+  function isoOf(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  function parseIso(s) { var m = str(s).match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? new Date(+m[1], +m[2] - 1, +m[3], 12) : null; }
+  /** Monday of the week containing iso date. */
+  function weekStart(iso) { var d = parseIso(iso) || new Date(); d.setHours(12); var back = (d.getDay() + 6) % 7; d.setDate(d.getDate() - back); return isoOf(d); }
+  function addDays(iso, n) { var d = parseIso(iso); d.setDate(d.getDate() + n); return isoOf(d); }
+  /** Sessions planned for the 7 days from monday, with overlap flags and notes on file. opts: { monday, today, providerKey, caseId } */
+  function calendarWeek(P, clinical, opts) {
+    opts = opts || {};
+    var monday = weekStart(opts.monday || opts.today), today = opts.today || isoOf(new Date());
+    var plan = weekPlan(P), days = [];
+    var notes = clinical && clinical.available ? clinical.notes : null;
+    for (var i = 0; i < 7; i++) {
+      var date = addDays(monday, i), dow = (i + 1) % 7, ev = [];
+      plan.forEach(function (a) {
+        a.slots.forEach(function (s) {
+          if (s.day !== dow) return;
+          ev.push({ date: date, start: s.start, end: s.end, note: s.note, case_id: a.case_id, student: a.student, provider: a.provider, providerKey: a.providerKey,
+            role: a.role, open: a.open, overlaps: [], noteState: '' });
+        });
+      });
+      ev.forEach(function (e, j) {
+        ev.forEach(function (o, k) {
+          if (k === j || o.start >= e.end || e.start >= o.end) return;
+          var sup = SUPERVISE.test(e.role + ' ' + e.note) || SUPERVISE.test(o.role + ' ' + o.note);
+          if (e.providerKey && e.providerKey === o.providerKey && o.case_id !== e.case_id && !sup) e.overlaps.push({ kind: 'provider', with: o.student, time: timeRange(o) });
+          else if (o.case_id === e.case_id && !sup && !e.open && !o.open && e.providerKey !== o.providerKey) e.overlaps.push({ kind: 'student', with: o.provider + ' (' + o.role + ')', time: timeRange(o) });
+        });
+        if (notes && date < today && !e.open) {
+          var hit = notes.some(function (n) { return n.case_id === e.case_id && n.date === date && (!e.providerKey || n.providerKey === e.providerKey); });
+          e.noteState = hit ? 'on_file' : 'none';
+        }
+      });
+      var shown = ev.filter(function (e) { return (!opts.providerKey || e.providerKey === opts.providerKey) && (!opts.caseId || e.case_id === opts.caseId); })
+        .sort(function (a, b) { return a.start - b.start || (a.student < b.student ? -1 : 1); });
+      days.push({ date: date, dow: dow, label: DAY_LABEL[dow], isToday: date === today, isPast: date < today, events: shown });
+    }
+    var scope = plan.filter(function (a) { return (!opts.providerKey || a.providerKey === opts.providerKey) && (!opts.caseId || a.case_id === opts.caseId); });
+    return { monday: monday, sunday: addDays(monday, 6), days: days,
+      offCalendar: scope.filter(function (a) { return a.unparsed.length || !a.slots.length; }).map(function (a) { return { case_id: a.case_id, student: a.student, provider: a.provider, providerKey: a.providerKey, role: a.role, open: a.open, text: a.unparsed.join('; ') || a.schedule }; }),
+      mandate: scope.filter(function (a) { return a.vsMandate === 'under' || a.vsMandate === 'over'; }),
+      // each clash is counted once, not once per side
+      overlapCount: days.reduce(function (n, d) { return n + d.events.reduce(function (m, e) { return m + e.overlaps.length; }, 0) / 2; }, 0),
+      notesAvailable: !!notes };
+  }
+  /** TTG bookings per provider (hours/week and which days). This is not their outside availability, which no source records. */
+  function providerLoad(P) {
+    var plan = weekPlan(P), out = {};
+    plan.forEach(function (a) {
+      if (!a.providerKey) return;
+      var o = out[a.providerKey] = out[a.providerKey] || { key: a.providerKey, name: a.provider, minutes: 0, days: {}, students: [] };
+      o.minutes += a.minutes; a.slots.forEach(function (s) { o.days[s.day] = 1; }); if (o.students.indexOf(a.student) < 0) o.students.push(a.student);
+    });
+    return out;
+  }
+
   /* ---------- search + review count ---------- */
   function searchAll(q, P, clinical) {
     q = str(q).toLowerCase(); if (q.length < 2) return [];
@@ -279,7 +396,9 @@
   var api = { maskSSN: maskSSN, documents: documents, caseRecords: caseRecords, EDITABLE: EDITABLE, val: val, safeUrl: safeUrl, hkey: hkey, providerIndex: providerIndex, findProvider: findProvider,
     normalizeBootstrap: normalizeBootstrap, student: student, queueGroups: queueGroups, normalizeClinical: normalizeClinical,
     filterNotes: filterNotes, noteProviders: noteProviders, buildReportDraft: buildReportDraft, searchAll: searchAll, reviewItems: reviewItems,
-    normName: normName, normService: normService };
+    normName: normName, normService: normService,
+    parseSchedule: parseSchedule, weekPlan: weekPlan, calendarWeek: calendarWeek, providerLoad: providerLoad, weekStart: weekStart, addDays: addDays,
+    timeRange: timeRange, fmtHours: fmtHours, mandateMinutes: mandateMinutes, slotMinutes: slotMinutes, DAY_LABEL: DAY_LABEL };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.TTG_V4_MODEL = api;
 })(typeof window !== 'undefined' ? window : this);

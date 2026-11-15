@@ -9,7 +9,7 @@
   var view = $('#view');
   var FIXTURE = /[?&](fixtures|demo)=1(&|$)/.test(location.search);
   var S = { mode: FIXTURE ? 'fixture' : 'live', boot: null, P: null, clinical: null, billing: null, loading: {}, route: 'home', params: [],
-    q: '', stuQ: '', noteF: {}, rep: {}, reportDraft: null, busy: false };
+    q: '', stuQ: '', noteF: {}, rep: {}, reportDraft: null, busy: false, cal: {}, stuGroup: '' };
   var KEY = '', fake = null, started = false;
 
   /* ---------- API ---------- */
@@ -263,15 +263,17 @@
 
   /* ---------- PROVIDERS & SCHEDULES ---------- */
   ROUTES.providers = function () {
-    var tab = S.params[0] === 'schedules' ? 'schedules' : 'providers', h = head('Providers & Schedules');
-    if (S.P.gaps.length) h += card(pill(S.P.gaps.length + ' coverage gap' + (S.P.gaps.length === 1 ? '' : 's'), 'warn') + '<div style="margin-top:8px">' + S.P.gaps.map(function (g) {
-      return '<a href="#/student/' + encodeURIComponent(g.case_id) + '">' + esc(g.student) + '</a> · ' + esc(g.role) + (g.days != null ? ' · unstaffed ' + esc(g.days) + ' day' + (g.days === 1 ? '' : 's') : '') + (g.departed ? ' <span class="muted">(left: ' + esc(g.departed) + ')</span>' : '');
-    }).join('<br>') + '</div>');
-    h += '<div class="chip-row"><a class="chip' + (tab === 'providers' ? ' on' : '') + '" href="#/providers">Providers</a><a class="chip' + (tab === 'schedules' ? ' on' : '') + '" href="#/providers/schedules">Schedules by student</a></div>';
+    var tab = S.params[0] === 'schedules' ? 'schedules' : S.params[0] === 'list' ? 'providers' : 'calendar', h = head('Providers & Schedules');
+    h += '<div class="chip-row seg"><a class="chip' + (tab === 'calendar' ? ' on' : '') + '" href="#/providers">Calendar</a><a class="chip' + (tab === 'providers' ? ' on' : '') + '" href="#/providers/list">Providers</a><a class="chip' + (tab === 'schedules' ? ' on' : '') + '" href="#/providers/schedules">By student</a></div>';
+    if (tab === 'calendar') return h + calendarView();
+    if (S.P.gaps.length) h += gapsCard();
     if (tab === 'providers') {
       if (!S.P.providers.length) h += warn('No providers in the connected sources.');
+      var load = M.providerLoad(S.P);
       S.P.providers.forEach(function (p) {
-        h += '<a class="card row" href="#/provider/' + esc(p.key) + '"><div class="grow"><b>' + esc(p.name) + '</b><small>' + esc(p.roles.join(' · ') || 'Role not on file') + ' · ' + p.cases.length + ' case' + (p.cases.length === 1 ? '' : 's') + '</small></div><span class="chev"></span></a>';
+        var l = load[p.key];
+        h += '<a class="card row" href="#/provider/' + esc(p.key) + '"><div class="grow"><b>' + esc(p.name) + '</b><small>' + esc(p.roles.join(' · ') || 'Role not on file') + ' · ' + p.cases.length + ' case' + (p.cases.length === 1 ? '' : 's') +
+          (l && l.minutes ? ' · ' + M.fmtHours(l.minutes) + '/week booked' : '') + '</small></div><span class="chev"></span></a>';
       });
     } else {
       S.P.students.forEach(function (s) {
@@ -284,6 +286,74 @@
     }
     return h;
   };
+  function gapsCard() {
+    return card('<b>' + S.P.gaps.length + ' unstaffed role' + (S.P.gaps.length === 1 ? '' : 's') + '</b><div style="margin-top:6px">' + S.P.gaps.map(function (g) {
+      return '<a href="#/student/' + encodeURIComponent(g.case_id) + '">' + esc(g.student) + '</a> · ' + esc(g.role) + (g.days ? ' · ' + esc(g.days) + ' day' + (g.days === 1 ? '' : 's') : '') + (g.departed ? ' <span class="muted">(left: ' + esc(g.departed) + ')</span>' : '') +
+        coverHint(g.role);
+    }).join('<br>') + '</div>');
+  }
+  // Same-discipline providers with their TTG weekly bookings. Outside availability is not recorded anywhere, so it is not claimed.
+  function coverHint(role) {
+    var load = M.providerLoad(S.P), n = M.normService(role);
+    var same = S.P.providers.filter(function (p) { return p.roles.some(function (r) { return M.normService(r) === n; }); });
+    if (!same.length) return '';
+    return '<div class="muted">Same discipline: ' + same.map(function (p) { var l = load[p.key]; return esc(p.name) + ' (' + (l && l.minutes ? M.fmtHours(l.minutes) : '0 h') + '/wk booked)'; }).join(', ') + '</div>';
+  }
+
+  /* ---------- CALENDAR (inside Providers & Schedules) ---------- */
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function dshort(iso) { var p = iso.split('-'); return MONTHS[+p[1] - 1] + ' ' + (+p[2]); }
+  function calScope() { var w = S.cal.who || ''; return { providerKey: w.indexOf('p:') === 0 ? w.slice(2) : '', caseId: w.indexOf('s:') === 0 ? w.slice(2) : '' }; }
+  function eventCard(e, opts) {
+    opts = opts || {};
+    var flags = '';
+    if (e.open) flags += pill('Unstaffed', 'warn');
+    e.overlaps.forEach(function (o) { flags += pill('Overlaps ' + o.with + ' ' + o.time, 'bad'); });
+    if (e.noteState === 'on_file') flags += pill('Note on file');
+    else if (e.noteState === 'none') flags += '<span class="muted">No note on file</span>';
+    return '<div class="ev' + (e.overlaps.length ? ' ev-bad' : '') + '"><div class="ev-time">' + esc(M.timeRange(e)) + '</div><div class="ev-body">' +
+      (opts.hideStudent ? '' : '<a href="#/student/' + encodeURIComponent(e.case_id) + '"><b>' + esc(e.student) + '</b></a> ') + '<span class="muted">' + esc(e.role) + '</span>' +
+      (opts.hideProvider || e.open ? '' : '<div>' + (e.providerKey ? '<a href="#/provider/' + esc(e.providerKey) + '">' + esc(e.provider) + '</a>' : esc(e.provider)) + '</div>') +
+      (e.note ? '<div class="muted">' + esc(e.note) + '</div>' : '') + (flags ? '<div class="ev-flags">' + flags + '</div>' : '') + '</div></div>';
+  }
+  function calendarView() {
+    if (!S.clinical) ensureClinical();
+    var t = today(), sc = calScope();
+    if (!S.cal.monday) S.cal.monday = M.weekStart(t);
+    var W = M.calendarWeek(S.P, S.clinical, { monday: S.cal.monday, today: t, providerKey: sc.providerKey, caseId: sc.caseId });
+    if (!S.cal.day || S.cal.day < W.monday || S.cal.day > W.sunday) S.cal.day = t >= W.monday && t <= W.sunday ? t : W.monday;
+    var h = '<div class="card cal-head"><button type="button" class="nav-btn" data-act="cal-week" data-d="-1" aria-label="Previous week">‹</button><div class="grow"><b>' + esc(dshort(W.monday) + ' – ' + dshort(W.sunday)) + '</b>' +
+      (W.monday === M.weekStart(t) ? '<small>This week</small>' : '<small><a href="#/providers" data-act="cal-week" data-d="0">Back to this week</a></small>') + '</div><button type="button" class="nav-btn" data-act="cal-week" data-d="1" aria-label="Next week">›</button></div>';
+    h += '<div class="selects cal-who"><label for="calWho">Show</label><select id="calWho" data-change="cal-who">' + opt('', 'Everyone', !S.cal.who) +
+      '<optgroup label="Providers">' + S.P.providers.filter(function (p) { return M.providerLoad(S.P)[p.key]; }).map(function (p) { return opt('p:' + p.key, p.name, S.cal.who === 'p:' + p.key); }).join('') + '</optgroup>' +
+      '<optgroup label="Students">' + S.P.students.map(function (s) { return opt('s:' + s.id, s.name, S.cal.who === 's:' + s.id); }).join('') + '</optgroup></select></div>';
+    // phone: day strip + agenda. wide screens: the whole week side by side (CSS decides).
+    h += '<div class="day-strip" role="tablist">' + W.days.map(function (d) {
+      var n = d.events.length;
+      return '<button type="button" role="tab" class="day' + (d.date === S.cal.day ? ' on' : '') + (d.isToday ? ' today' : '') + '" data-act="cal-day" data-date="' + esc(d.date) + '" aria-selected="' + (d.date === S.cal.day) + '">' +
+        '<span>' + esc(d.label) + '</span><b>' + esc(+d.date.slice(8)) + '</b><small>' + (n ? n : '–') + '</small></button>';
+    }).join('') + '</div>';
+    var opts = { hideProvider: !!sc.providerKey, hideStudent: !!sc.caseId };
+    var sel = W.days.filter(function (d) { return d.date === S.cal.day; })[0];
+    h += '<div class="agenda">' + card('<div class="sec-mini">' + esc(sel.label + ', ' + dshort(sel.date)) + (sel.isToday ? ' · today' : '') + '</div>' +
+      (sel.events.length ? sel.events.map(function (e) { return eventCard(e, opts); }).join('') : '<p class="muted">Nothing scheduled.</p>')) + '</div>';
+    h += '<div class="week-grid">' + W.days.map(function (d) {
+      return '<div class="wcol' + (d.isToday ? ' today' : '') + '"><div class="wcol-h">' + esc(d.label) + ' <b>' + esc(+d.date.slice(8)) + '</b></div>' +
+        (d.events.length ? d.events.map(function (e) { return eventCard(e, opts); }).join('') : '<p class="muted">–</p>') + '</div>';
+    }).join('') + '</div>';
+    // What needs attention this week, in words.
+    var att = [];
+    if (W.overlapCount) att.push('<b>' + W.overlapCount + ' overlap' + (W.overlapCount === 1 ? '' : 's') + '</b>: a provider or a child booked in two sessions at once. Joint and supervision sessions are not counted.');
+    W.mandate.forEach(function (a) { att.push('<a href="#/student/' + encodeURIComponent(a.case_id) + '">' + esc(a.student) + '</a> · ' + esc(a.role) + ': scheduled ' + esc(M.fmtHours(a.minutes)) + ' a week, mandate ' + esc(M.fmtHours(a.mandateMin)) + '.'); });
+    var gapsHere = S.P.gaps.filter(function (g) { return !sc.caseId || g.case_id === sc.caseId; });
+    if (!sc.providerKey) gapsHere.forEach(function (g) { att.push('<a href="#/student/' + encodeURIComponent(g.case_id) + '">' + esc(g.student) + '</a> · ' + esc(g.role) + ' is unstaffed.' + coverHint(g.role)); });
+    if (att.length) h += card('<b>Needs attention this week</b>' + att.map(function (x) { return '<div class="att">' + x + '</div>'; }).join(''));
+    var off = W.offCalendar.filter(function (o) { return !o.open || o.text; });
+    if (off.length) h += '<details class="card"><summary><b>Not on the calendar (' + off.length + ')</b></summary><p class="muted">These schedules have no day and time the app can read, so they are shown as written.</p>' +
+      off.map(function (o) { return '<div class="att"><a href="#/student/' + encodeURIComponent(o.case_id) + '">' + esc(o.student) + '</a> · ' + esc(o.role) + (o.provider ? ' · ' + esc(o.provider) : '') + '<div class="muted">' + esc(o.text || 'No schedule on file') + '</div></div>'; }).join('') + '</details>';
+    h += '<p class="src">From the Provider Hub schedules' + (W.notesAvailable ? ' and clinical notes. A day with no note is not a missed session.' : '. Clinical notes are not connected, so past days show no note status.') + '</p>';
+    return h;
+  }
   ROUTES.provider = function () {
     var p = S.P.providers.filter(function (x) { return x.key === S.params[0]; })[0];
     if (!p) return head('Provider', '#/providers', 'Providers') + '<div class="list-empty">Provider not found.</div>';
@@ -475,6 +545,12 @@
   var saved = function () { return S.mode === 'fixture' ? ' (preview only)' : ''; };
   var ACT = {
     'home-search': function () { S.q = v('homeQ').trim(); if (location.hash === '#/search') render(); else location.hash = '#/search'; },
+    'cal-week': function (el, e) {
+      if (e && e.preventDefault) e.preventDefault();
+      var d = +el.getAttribute('data-d'); S.cal.monday = d === 0 ? M.weekStart(today()) : M.addDays(S.cal.monday || M.weekStart(today()), 7 * d); S.cal.day = ''; render();
+    },
+    'cal-day': function (el) { S.cal.day = el.getAttribute('data-date'); render(); },
+    'cal-who': function (el) { S.cal.who = String(el.value || ''); render(); },
     'stu-filter': function (el) { S.stuQ = String(el.value || ''); render(); },
     'note-filter': function (el) { S.noteF[el.getAttribute('data-k')] = String(el.value || ''); render(); },
     'notes-by-provider': function (el) { S.noteF = { providerKey: el.getAttribute('data-key') }; },

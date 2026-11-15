@@ -389,10 +389,22 @@ test('REGRESSION SW: requests with a query (e.g. ?k=) are never cached; shell ca
   assert.match(read('sw.js'), /ttgops-v10/);
   assert.ok(read('app.js').includes("navigator.serviceWorker.register('sw.js')"), 'app must register the new worker so old caches are purged');
 });
-/* Student/provider record redesign — optional fields are synthetic only. */
+/* Student/provider record redesign. Optional fields (OSIS, case numbers, rates, SSN) are NOT sent by the live API today, so the
+   public fixture no longer carries them (it must match the real API shape). These tests add them, synthetic only. */
+function richFX() {
+  const o = clone(FX), c = o.bootstrap.cases.find(x => x.student === 'Avery Demo');
+  c.osis = 'DEMO-OSIS-0001'; c.district = 'Fictional District'; c.goals = 'Fictional goal: practice requesting help during activities.';
+  c.service_cases = [
+    { case_number: 'DEMO-CASE-OT-01', service: 'OT', auth_start: '2026-09-01', auth_end: '2027-01-05', authorized_hours: '30', frequency: '2 sessions/week', rate: '$50/hour (fictional)', funding_source: 'Sample funding', provider: 'Morgan Lane', status: 'Active', source: 'Fictional authorization example' },
+    { case_number: 'DEMO-CASE-SLP-02', service: 'Speech', auth_start: '2026-09-01', auth_end: '2027-01-05', authorized_units: '24', frequency: '1 session/week', rate: '$20/unit (fictional)', funding_source: 'Sample funding', provider: 'Taylor Brook', status: 'Active', source: 'Fictional authorization example' }];
+  const j = c.team.find(m => m.name === 'Jamie Fern');
+  Object.assign(j, { ssn: '000-00-0042', rate: '$40/hour (fictional)', hours: '10/week (fictional)', credentials: 'Sample ABA credential', documents: [{ title: 'Fictional credential record', url: 'https://example.com/sample-credential' }] });
+  return o;
+}
+function bootRich() { const s = server(richFX()); return boot({ key: KEY, fetchImpl: s.fetchImpl }); }
 const sectionNames = h => [...h.matchAll(/data-section="([^"]+)"/g)].map(m => m[1].replace(/&amp;/g, '&'));
 test('records: student has exactly seven requested sections in order, no field dumps or empty rows', async () => {
-  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush();
+  const t = bootRich(); await flush();
   const a = t.app.S.P.students.find(x => x.name === 'Avery Demo'); await t.go('#/student/' + a.id); await flush();
   assert.deepStrictEqual(sectionNames(t.html), ['Child info', 'Cases', 'Providers', 'Schedule', 'Billing', 'Documents', 'Clinical Data']);
   assert.doesNotMatch(t.html.replace(/<details[\s\S]*?<\/details>/g, ''), /Hours &amp; key dates|Hours & key dates|Not on file|Last contact:|Sched vs delivered|Notes submitted|Assessment\/report due/);
@@ -400,7 +412,7 @@ test('records: student has exactly seven requested sections in order, no field d
   assert.match(t.html, /Parent of Avery/); assert.match(t.html, /id="caseNote"/); assert.match(t.html, /data-act="case-edit"/);
 });
 test('records: one card per explicit case number, distinct authorizations, units and hours are never conflated', async () => {
-  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush();
+  const t = bootRich(); await flush();
   const a = t.app.S.P.students.find(x => x.name === 'Avery Demo'); await t.go('#/student/' + a.id);
   assert.equal(a.caseRecords.length, 2);
   const html = t.html.split('data-section="Cases"')[1].split('</section>')[0];
@@ -420,7 +432,7 @@ test('records: absent live fields stay absent; no invented OSIS, case numbers, r
   for (const p of t.app.S.P.providers) { await t.go('#/provider/' + p.key); assert.doesNotMatch(t.html, /SSN \(last 4|<dt>Rate<|<dt>Hours<|Not on file/); }
 });
 test('records: provider has five requested sections, scoped roster/billing/notes, masked SSN, no decisions', async () => {
-  const t = boot({ search: '?fixtures=1', preloadFixtures: true, key: KEY }); await flush();
+  const t = bootRich(); await flush();
   const p = t.app.S.P.providers.find(x => x.name === 'Jamie Fern'); await t.go('#/provider/' + p.key); await flush();
   assert.deepStrictEqual(sectionNames(t.html), ['Provider info', 'Case roster & schedule', 'Billing sheets', 'Documents', 'Clinical data']);
   assert.match(t.html, /\*\*\*-\*\*-0042/); assert.doesNotMatch(t.html, /000-00-0042|000000042/);
@@ -430,15 +442,15 @@ test('records: provider has five requested sections, scoped roster/billing/notes
   assert.match(t.html, /INV-DEMO-OCT/); assert.match(t.html, /Read-only analysis/);
   const a = t.app.S.P.students.find(x => x.name === 'Avery Demo'); await t.go('#/student/' + a.id);
   assert.match(t.html, /INV-DEMO-OCT/); assert.doesNotMatch(t.html, /INV-DEMO-ABA|data-act="bill-|data-change="bill-check"/);
-  assert.equal(t.fetches.length, 0); assert.deepStrictEqual(t.setItems, []);
+  assert.deepStrictEqual(t.setItems.filter(k => k !== 'ttgops.k'), []);
 });
 test('records: SSN masking retains only last four digits in normalized provider, never put in URLs or storage', async () => {
   assert.equal(M.maskSSN('000-00-0042'), '***-**-0042'); assert.equal(M.maskSSN('0042'), '***-**-0042'); assert.equal(M.maskSSN('not available'), '');
-  const P = M.normalizeBootstrap(FX.bootstrap), p = P.providers.find(x => x.name === 'Jamie Fern');
+  const P = M.normalizeBootstrap(richFX().bootstrap), p = P.providers.find(x => x.name === 'Jamie Fern');
   assert.equal(p.ssn, '***-**-0042'); assert.doesNotMatch(JSON.stringify(P), /000-00-0042|000000042/);
-  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush(); await t.go('#/provider/' + p.key);
+  const t = bootRich(); await flush(); await t.go('#/provider/' + p.key);
   const links = [...t.html.matchAll(/href="([^"]+)"/g)].map(x => x[1]); assert.ok(links.every(u => !/0042|ssn/i.test(u)));
-  assert.deepStrictEqual(t.setItems, []);
+  assert.deepStrictEqual(t.setItems.filter(k => k !== 'ttgops.k'), []);
 });
 test('records: parents and guardians in team or assignments never become providers', () => {
   const b = clone(FX.bootstrap); b.cases[0].team.push({name:'Family Demo',role:'Guardian',phone:'555-0199'});
