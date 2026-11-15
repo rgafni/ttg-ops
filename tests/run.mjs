@@ -1,6 +1,7 @@
 // TTG Ops v4 tests. Synthetic data only. No network: every fetch is a recorded stub.
 import assert from 'assert';
 import vm from 'vm';
+import { createRequire } from 'module';
 import { boot, fixtures, model, flush, clone, jsonRes, read, load } from './harness.mjs';
 
 let passed = 0, failed = 0; const tests = [];
@@ -217,7 +218,7 @@ test('app: live mode never loads fixture files and shows only live records', asy
 });
 test('REGRESSION app: live network failure shows a real error, never fixtures', async () => {
   const t = boot({ key: KEY, fetchImpl: () => Promise.reject(new Error('Failed to fetch')) }); await flush();
-  assert.match(t.html, /Live data could not be loaded/); assert.match(t.html, /Failed to fetch/); assert.match(t.html, /No sample data/);
+  assert.match(t.html, /Live data could not be loaded/); assert.match(t.html, /Could not reach the TTG Ops server/); assert.doesNotMatch(t.html, /Failed to fetch/); assert.match(t.html, /No sample data/);
   for (const n of FIXTURE_NAMES) assert.ok(!t.html.includes(n));
   assert.equal(t.app.S.P, null); assert.deepStrictEqual(t.scripts, []);
 });
@@ -386,7 +387,7 @@ test('REGRESSION SW: requests with a query (e.g. ?k=) are never cached; shell ca
   await flush();
   assert.ok(!puts.some(p => /\?|SECRET/.test(p)), 'cached a query URL: ' + puts);
   assert.deepStrictEqual(puts, ['https://rgafni.github.io/ttg-ops/app.js']);
-  assert.match(read('sw.js'), /ttgops-v11/);
+  assert.match(read('sw.js'), /ttgops-v12/);
   assert.ok(read('app.js').includes("navigator.serviceWorker.register('sw.js')"), 'app must register the new worker so old caches are purged');
 });
 /* Student/provider record redesign. Optional fields (OSIS, case numbers, rates, SSN) are NOT sent by the live API today, so the
@@ -552,7 +553,7 @@ test('public fixture carries no field the live API does not send (OSIS, case num
 });
 test('billing: each line shows schedule context in words (on the schedule that day, over the weekly mandate); sign-off rules unchanged', async () => {
   const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush(); await t.go('#/billing/INV-DEMO-SPEECH'); await flush();
-  assert.match(t.html, /Not on the schedule that Fri/); assert.match(t.html, /Billed 45 min that week, mandate 30 min/);
+  assert.match(t.html, /No Friday session on the schedule/); assert.match(t.html, /Billed 45 min that week, mandate 30 min/);
   assert.match(t.html, /data-act="bill-sign"[^>]*disabled/);
   assert.doesNotMatch(read('billing-core.js'), /schedule/i);
 });
@@ -563,6 +564,85 @@ test('public files contain only fictional data: no staff full names, real ids, k
     assert.ok(!new RegExp(banned.join('|')).test(s), f);
   }
   assert.match(read('fixtures/v4-sample.js'), /FICTIONAL/);
+});
+
+/* ================= pass 2 (Nov 15): edge cases, plain copy, errors, accessibility ================= */
+const EDGE = createRequire(import.meta.url)('./stress-fixtures.js');
+async function bootWith(data) { const srv = server(data); const t = boot({ key: KEY, fetchImpl: srv.fetchImpl }); await flush(10); return t; }
+test('edge: long names and a crowded day render on every route without breaking', async () => {
+  const t = await bootWith(EDGE.stress()); const out = await allRoutes(t);
+  for (const [r, h] of Object.entries(out)) { assert.ok(h.length > 50, r); assert.doesNotMatch(h, /undefined|NaN|\[object Object\]/, r); }
+  const st = t.app.S.P.students.find(s => s.name === EDGE.LONG_S); assert.ok(st);
+  assert.match(out['#/student/' + st.id], new RegExp(EDGE.LONG_S));
+  t.app.S.cal.who = 's:' + st.id; t.app.S.cal.monday = '2026-11-09'; t.app.S.cal.day = '2026-11-09'; await t.go('#/providers'); await t.go('#/providers');
+  const agenda = t.html.split('class="agenda"')[1].split('class="week-grid"')[0];
+  assert.ok((agenda.match(/class="ev[ "]/g) || []).length >= 10, 'crowded Monday lists every session');
+});
+test('edge: student overview never repeats BCBA or the unstaffed reason', async () => {
+  const t = await bootWith(EDGE.stress()); const out = await allRoutes(t);
+  for (const [r, h] of Object.entries(out)) { if (!r.startsWith('#/student/')) continue; const ov = (h.split('class="card overview"')[1] || '').split('</div></div>')[0];
+    assert.doesNotMatch(ov, /BCBA · BCBA/, r); assert.doesNotMatch(ov, /unstaffed<\/div><div class="ov-why">Unstaffed/i, r); }
+});
+test('edge: no data at all gives one plain sentence per screen, a calm zero badge and no dead buttons', async () => {
+  const t = await bootWith(EDGE.empty()); const out = await allRoutes(t);
+  for (const [r, h] of Object.entries(out)) assert.doesNotMatch(h, /undefined|NaN|0 of 0/, r);
+  assert.match(out['#/'], /class="badge zero"/);
+  assert.match(out['#/students'], /No students on file/);
+  assert.match(out['#/notes'], /No clinical notes are linked to a student yet/);
+  assert.match(out['#/reports'], /No students on file, so there is nothing to report on yet/); assert.doesNotMatch(out['#/reports'], /data-act="rep-create"/);
+  assert.match(out['#/billing'], /No incoming billing/);
+  assert.match(out['#/providers'], /Nothing scheduled this week/);
+  assert.match(out['#/review'], /Nothing waiting for you/);
+  assert.match(out['#/search'], /Type a name, a service or a word from a note/);
+});
+test('errors: offline, timeouts and unreadable replies are explained in plain words, never raw browser text', async () => {
+  const later = err => () => new Promise((_, rej) => setTimeout(() => rej(err), 5));
+  let t = boot({ key: KEY, fetchImpl: later(new Error('Failed to fetch')) }); t.sb.navigator = { onLine: false }; await flush(10);
+  assert.match(t.html, /This device is offline/); assert.match(t.html, /Try again/); assert.doesNotMatch(t.html, /Failed to fetch/);
+  const ab = new Error('The operation was aborted.'); ab.name = 'AbortError';
+  t = boot({ key: KEY, fetchImpl: later(ab) }); await flush(10); assert.match(t.html, /took too long/);
+  t = boot({ key: KEY, fetchImpl: () => Promise.resolve({ json: () => Promise.reject(new SyntaxError('Unexpected token < in JSON')) }) }); await flush(10);
+  assert.match(t.html, /could not read/); assert.doesNotMatch(t.html, /Unexpected token/);
+  assert.match(read('app.js'), /AbortController/, 'requests time out instead of hanging');
+});
+test('billing screen: no internal note ids or "(s)" in what Roni reads; billing-core wording and rules unchanged', async () => {
+  const msgs = []; const t = boot({ search: '?fixtures=1', preloadFixtures: true, confirm: m => { msgs.push(m); return true; } }); await flush();
+  await t.go('#/billing'); await flush(); const out = await allRoutes(t);
+  for (const b of t.app.S.billing.batches) {
+    const h = out['#/billing/' + b.id];
+    const reasons = h.split('<div class="muted">').slice(1).map(x => x.split('</div>')[0]).join(' ');
+    assert.doesNotMatch(reasons, /match note N[0-9a-f]{6,}/, b.id); assert.doesNotMatch(h, /line\(s\)/, b.id);
+  }
+  const oct = t.app.S.billing.batches.find(b => b.id === 'INV-DEMO-OCT');
+  assert.ok(oct.review.some(r => / match note N[0-9a-f]+$/.test(r.reasons[0])), 'core reasons still carry the note id for the audit');
+  assert.match(BC.signoffBlocker([{ state: 'aligned' }], { checks: {} }) || '', /line\(s\)/, 'billing-core text untouched');
+  for (const l of oct.lines) await t.act('bill-check', { 'data-batch': oct.id, 'data-line': l.id }, { checked: true });
+  await t.act('bill-sign', { 'data-batch': oct.id });
+  assert.ok(msgs.some(m => /All 2 lines match their notes/.test(m)), msgs.join('|'));
+  const av = t.app.S.P.students.find(s => s.name === 'Avery Demo'); await t.go('#/student/' + av.id);
+  assert.doesNotMatch(t.html, /match note N[0-9a-f]{6,}/, 'record billing rows are plain too'); assert.match(t.html, /INV-DEMO-OCT<\/a> · /);
+});
+test('calendar: other weeks say they show today\u2019s schedule; this week does not', async () => {
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush();
+  await t.go('#/providers'); assert.doesNotMatch(t.html, /today\u2019s schedule on a/); assert.match(t.html, /Needs attention this week/);
+  await t.act('cal-week', { 'data-d': '-1' }); assert.match(t.html, /today\u2019s schedule on a past week/); assert.doesNotMatch(t.html, /Needs attention this week/);
+  await t.act('cal-week', { 'data-d': '0' }); await t.act('cal-week', { 'data-d': '1' }); assert.match(t.html, /today\u2019s schedule on a future week/);
+});
+test('accessibility: screen reader labels, one live region for messages, focus moves to the page title', async () => {
+  const idx = read('index.html'); assert.match(idx, /<main id="view"><\/main>/); assert.match(idx, /id="toast"[^>]*role="status"/);
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush();
+  await t.go('#/providers'); assert.match(t.html, /<span class="sr">Mon [A-Z][a-z]{2} \d+, (\d+ sessions?|no sessions)<\/span>/);
+  assert.match(read('app.js'), /h1\.focus\(/);
+  const css = read('app.css'); assert.match(css, /:focus-visible/); assert.match(css, /prefers-reduced-motion/); assert.match(css, /--amber: #8a5a14/);
+  const c = t.app.S.P.students.find(s => s.name === 'Casey Example'); await t.go('#/student/' + c.id);
+  assert.match(t.html, /<div class="card record-section empty" data-section="Billing">/); assert.doesNotMatch(t.html, /data-act="cal-open"/, 'no calendar link when nothing is on the calendar');
+});
+test('plain copy: open items never show a bare rule code; lists do not repeat the recipient; students filter by provider', async () => {
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush();
+  for (const q of t.app.S.P.queue) { await t.go('#/item/' + q.id); assert.doesNotMatch(t.html, /<dd>T\d+<\/dd>/, q.id); }
+  await t.go('#/email'); assert.doesNotMatch(t.html, /Draft to Parent of Blake \(demo\)<\/b><small>Parent of Blake/);
+  t.app.S.stuQ = 'fern'; await t.go('#/students'); await t.go('#/students/'); assert.match(t.html, /Avery Demo/); assert.match(t.html, /Riley Fixture/);
+  await t.go('#/settings'); assert.doesNotMatch(t.html, /(?<!of )\b1 rows\b/); assert.match(t.html, /Not started/);
 });
 
 for (const [name, fn] of tests) {

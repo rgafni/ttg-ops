@@ -13,7 +13,7 @@
   --teal-bg: #e6f4f1;
   --red: #b4483e;
   --red-bg: #fcecea;
-  --amber: #b0782a;
+  --amber: #8a5a14;
   --radius: 16px;
   --tap: 48px;
   --font: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
@@ -198,3 +198,33 @@ details.record-section[open] > summary::after { transform: translateY(-50%) rota
 details.filters > summary { flex-wrap: wrap; }
 .sched-ctx { font-size: 13px; color: var(--muted); margin-top: 6px; }
 a.card.review-link { display: flex; margin-top: 12px; }
+
+/* Pass 2 (Nov 15): layout, tap targets, focus and contrast. */
+body { overflow-wrap: break-word; }
+.back h1 { font-size: clamp(22px, 7vw, 28px); overflow-wrap: anywhere; }
+.back a { min-height: 44px; }
+:focus-visible { outline: 3px solid var(--teal); outline-offset: 2px; }
+.search:focus-visible { outline-offset: 0; }
+.btn:disabled, .btn.disabled { color: #3f4842; }
+details.card > summary { min-height: 44px; }
+details.record-item > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 600; color: var(--teal); }
+.check-row { align-items: center; min-height: 44px; cursor: pointer; }
+.check-row input[type=checkbox] { width: 22px; height: 22px; flex: none; margin: 0; accent-color: var(--green); }
+.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.two > div { min-width: 0; }
+.selects input[type=date], .selects input[type=month] { min-width: 0; max-width: 100%; }
+@media (max-width: 359px) { .two { grid-template-columns: 1fr; gap: 0; } }
+details.filters { margin-top: 12px; }
+.badge.zero { background: var(--green-soft); color: var(--green-dark); }
+.seg .chip { min-height: 44px; padding: 8px 14px; }
+.sources { margin: 8px 0 0; padding-left: 18px; font-size: 13px; }
+.sources li { margin: 2px 0; }
+.ev-body, .wcol .ev, .nc-top { min-width: 0; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } .tile:active { transform: none; } }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.day { position: relative; }
+.record-section.empty { display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; min-height: 56px; justify-content: center; }
+.record-section.empty .rs-t { color: var(--muted); }
+details.card > summary { position: relative; padding-right: 26px; }
+details.card > summary::after { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
+@media (min-width: 760px) { .tiles { grid-template-columns: repeat(3, 1fr); } .tile { min-height: 128px; } }

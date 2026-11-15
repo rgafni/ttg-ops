@@ -22,10 +22,21 @@
     }
     if (!KEY) return Promise.reject(new Error('unauthorized'));
     var u = apiUrl(); if (!allowedApi(u)) return Promise.reject(new Error('API address is missing or not allowed'));
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null, timer = ctl ? setTimeout(function () { ctl.abort(); }, 45000) : null;
     return fetch(u, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ key: KEY, action: action, data: data || {} }),
-      redirect: 'follow', referrerPolicy: 'no-referrer', cache: 'no-store', credentials: 'omit' })
-      .then(function (r) { return r.json(); })
+      redirect: 'follow', referrerPolicy: 'no-referrer', cache: 'no-store', credentials: 'omit', signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { clearTimeout(timer); return r.json().catch(function () { throw new Error('bad reply'); }); }, function (e) { clearTimeout(timer); throw e; })
       .then(function (j) { if (!j || j.ok !== true) throw new Error((j && j.error) || 'request failed'); return j; });
+  }
+  // Network and server errors in plain words. 'unauthorized' passes through so the key screen can catch it.
+  function plainError(e) {
+    var m = String((e && e.message) || e || '');
+    if (/unauthorized/.test(m)) return m;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'This device is offline. Connect to the internet and try again.';
+    if (e && e.name === 'AbortError' || /abort/i.test(m)) return 'The server took too long to answer. Try again in a minute.';
+    if (/failed to fetch|networkerror|load failed|network request failed/i.test(m)) return 'Could not reach the TTG Ops server. Check the connection and try again.';
+    if (/bad reply|unexpected token|json/i.test(m)) return 'The server sent a reply the app could not read. It may be updating; try again in a minute.';
+    return m || 'Something went wrong.';
   }
   function reqId() {
     var a = new Uint8Array(12); try { crypto.getRandomValues(a); } catch (e) { for (var i = 0; i < a.length; i++) a[i] = Math.floor(Math.random() * 256); }
@@ -57,7 +68,7 @@
     if (v4Missing()) { S.clinical = M.normalizeClinical({ available: false, reason: 'The private API has not been updated with the clinical-notes source yet (v4 backend not deployed).' }); return; }
     S.loading.clinical = true;
     api('clinicalNotes', {}).then(function (r) { S.clinical = M.normalizeClinical(r.clinical, S.P); })
-      .catch(function (e) { S.clinical = M.normalizeClinical({ available: false, reason: 'Could not load clinical notes: ' + e.message }); })
+      .catch(function (e) { S.clinical = M.normalizeClinical({ available: false, reason: 'Could not load clinical notes. ' + plainError(e) }); })
       .then(function () { S.loading.clinical = false; render(); });
   }
   function ensureBilling() {
@@ -65,7 +76,7 @@
     if (v4Missing()) { S.billing = { available: false, reason: 'The private API has not been updated with billing review yet (v4 backend not deployed).', batches: [] }; return; }
     S.loading.billing = true;
     api('billingReview', {}).then(function (r) { S.billing = r.billing; })
-      .catch(function (e) { S.billing = { available: false, reason: 'Could not load billing: ' + e.message, batches: [] }; })
+      .catch(function (e) { S.billing = { available: false, reason: 'Could not load billing. ' + plainError(e), batches: [] }; })
       .then(function () { S.loading.billing = false; render(); });
   }
   function loadingCard(what) { return card('<span class="muted">Loading ' + esc(what) + '…</span>'); }
@@ -82,7 +93,9 @@
     if (!S.P) return;
     var fn = ROUTES[S.route] || ROUTES.home;
     view.innerHTML = fn();
+    var moved = S._lastRoute !== undefined && S._lastRoute !== location.hash;
     try { window.scrollTo && S._lastRoute !== location.hash && window.scrollTo(0, 0); } catch (e) {}
+    try { var h1 = moved && view.querySelector && view.querySelector('h1'); if (h1) { h1.setAttribute('tabindex', '-1'); h1.focus({ preventScroll: true }); } } catch (e) {}
     S._lastRoute = location.hash;
   }
 
@@ -101,8 +114,8 @@
     var tiles = [['students', 'Students\n& Cases', ICONS.person], ['notes', 'Clinical\nNotes', ICONS.note], ['providers', 'Providers\n& Schedules', ICONS.calendar],
       ['billing', 'Billing\nReview', ICONS.checklist], ['reports', 'Reports\n& Updates', ICONS.bars], ['email', 'Email &\nOpen Items', ICONS.envelope]];
     return '<div class="brand-row"><img src="icons/icon-192.png" alt=""><div><b>TTG Ops</b><small>Oversight workspace</small></div></div>' + banner() +
-      '<form data-submit="home-search"><input class="search" id="homeQ" name="q" autocomplete="off" placeholder="Search students, providers, notes, items…" aria-label="Search"></form>' +
-      '<a class="card review-link" href="#/review"><span>Needs your review</span><span class="badge">' + n + '</span></a>' +
+      '<form data-submit="home-search"><input class="search" id="homeQ" name="q" autocomplete="off" placeholder="Search students, providers, notes" aria-label="Search students, providers, notes and items"></form>' +
+      '<a class="card review-link" href="#/review"><span>Needs your review</span><span class="badge' + (n ? '' : ' zero') + '" aria-label="' + plural(n, 'item') + '">' + n + '</span></a>' +
       '<div class="tiles">' + tiles.map(function (t) { return '<a class="tile" href="#/' + t[0] + '"><span class="ico">' + t[2] + '</span><b>' + esc(t[1]) + '</b></a>'; }).join('') + '</div>' +
       '<p class="muted" style="margin-top:16px"><a href="#/settings">Settings &amp; data sources</a></p>';
   };
@@ -133,8 +146,10 @@
   ROUTES.search = function () {
     if (!S.clinical) ensureClinical();
     var hits = M.searchAll(S.q, S.P, S.clinical), h = head('Search');
-    h += '<form data-submit="home-search"><input class="search" id="homeQ" value="' + esc(S.q) + '" autocomplete="off" aria-label="Search"></form>';
-    if (!hits.length) h += '<div class="list-empty">No matches.</div>';
+    h += '<form data-submit="home-search"><input class="search" id="homeQ" value="' + esc(S.q) + '" autocomplete="off" placeholder="Search students, providers, notes" aria-label="Search students, providers, notes and items"></form>';
+    if (!S.q) h += '<div class="list-empty">Type a name, a service or a word from a note.</div>';
+    else if (!hits.length) h += '<div class="list-empty">No matches for \u201c' + esc(S.q) + '\u201d.</div>';
+    else h += '<p class="muted">' + plural(hits.length, 'match') .replace('matchs', 'matches') + '</p>';
     hits.forEach(function (x) { h += '<a class="card row" href="' + esc(x.href) + '"><div class="grow"><b>' + esc(x.title) + '</b><small>' + esc(x.type + (x.sub ? ' · ' + x.sub : '')) + '</small></div><span class="chev"></span></a>'; });
     return h;
   };
@@ -150,11 +165,11 @@
       esc(s.services.join(' · ') || s.setting || 'No services on file') + '</small>' + (why ? '<small class="why">' + esc(why) + '</small>' : '') + '</div><span class="chev"></span></a>';
   }
   ROUTES.students = function () {
-    var q = S.stuQ.toLowerCase(), list = S.P.students.filter(function (s) { return !q || (s.name + ' ' + s.services.join(' ') + ' ' + s.bcba.map(function (b) { return b.name; }).join(' ')).toLowerCase().indexOf(q) >= 0; });
+    var q = S.stuQ.toLowerCase(), list = S.P.students.filter(function (s) { return !q || (s.name + ' ' + s.services.join(' ') + ' ' + s.bcba.map(function (b) { return b.name; }).join(' ') + ' ' + (s.providers || []).map(function (b) { return b.name; }).join(' ')).toLowerCase().indexOf(q) >= 0; });
     var by = S.params[0] === 'bcba' ? 'bcba' : 'name', h = head('Students & Cases');
     if (S.P.ambiguous.length) h += warn('<b>Possible duplicate records:</b> ' + S.P.ambiguous.map(function (s) { return esc(s.name) + ' (' + esc(s.id) + ')'; }).join(', ') + '. Shown separately, never merged.');
     if (S.P.sync && S.P.sync.stale) h += warn('Roster and Case Board are out of sync' + (S.P.sync.roster_ok ? '' : ' (roster unreadable)') + '. See Settings.');
-    h += '<input class="search" data-change="stu-filter" value="' + esc(S.stuQ) + '" placeholder="Filter students" aria-label="Filter students" style="margin-bottom:12px">';
+    h += '<input class="search" data-change="stu-filter" value="' + esc(S.stuQ) + '" placeholder="Filter by name, service or provider" aria-label="Filter students by name, service or provider" style="margin-bottom:12px">';
     h += '<div class="chip-row seg"><a class="chip' + (by === 'name' ? ' on' : '') + '" href="#/students">A to Z</a><a class="chip' + (by === 'bcba' ? ' on' : '') + '" href="#/students/bcba">By BCBA</a></div>';
     if (!list.length) h += '<div class="list-empty">' + (S.P.students.length ? 'No students match.' : 'No students on file.') + '</div>';
     if (by === 'name') list.forEach(function (s) { h += studentRow(s); });
@@ -180,6 +195,8 @@
   }
   // Each record section is one tappable row with a one-line summary; details open only when tapped.
   function recordSection(title, body, empty, summary, open) {
+    // Nothing to open: a plain row that says so once, with no arrow that leads to the same sentence.
+    if (!body) return '<div class="card record-section empty" data-section="' + esc(title) + '"><span class="rs-t">' + esc(title) + '</span><span class="rs-s">' + esc(empty || 'Nothing connected yet.') + '</span></div>';
     return '<details class="card record-section" data-section="' + esc(title) + '"' + (open ? ' open' : '') + '><summary><span class="rs-t">' + esc(title) + '</span>' +
       '<span class="rs-s">' + esc(body ? (summary || '') : (empty || 'Nothing connected yet.')) + '</span></summary>' +
       '<div class="rs-body">' + (body || '<p class="muted">' + esc(empty || 'Nothing connected yet.') + '</p>') + '</div></details>';
@@ -215,9 +232,11 @@
     var rows = [];
     S.billing.batches.forEach(function (b) { b.lines.forEach(function (l, i) { if (!match(l)) return;
       var r = b.review[i] || {}, state = STATE[r.state] || STATE.needs_review;
-      rows.push(recordItem('<a href="#/billing/' + encodeURIComponent(b.id) + '">' + esc(b.id) + '</a> ' + pill(state[0], state[1]) +
-        presentKV([['Date', l.date], ['Student', l.student], ['Provider', l.provider], ['Service', l.service], ['Duration', l.duration_min != null ? l.duration_min + ' min' : ''], ['Units', l.units], ['Review', b.audit.status]]) +
-        (r.reasons && r.reasons.length ? '<p class="muted">' + r.reasons.map(esc).join(' · ') + '</p>' : '')));
+      // One compact line per billed session; the full comparison lives in the batch.
+      rows.push(recordItem('<div class="row" style="min-height:0"><div class="grow"><b>' + esc((l.date || 'No date') + ' · ' + (l.service || 'No service')) + '</b><small>' +
+        esc([l.provider, l.duration_min != null ? l.duration_min + ' min' : '', l.units != null ? l.units + ' units' : ''].filter(Boolean).join(' · ')) + '</small></div>' + pill(state[0], state[1]) + '</div>' +
+        (r.reasons && r.reasons.length ? '<div class="muted">' + r.reasons.map(function (x) { return esc(plainReason(x, r).replace(' match the note below', ' match the note')); }).join(' · ') + '</div>' : '') +
+        '<div class="src"><a href="#/billing/' + encodeURIComponent(b.id) + '">' + esc(b.id) + '</a> · ' + esc(b.audit.status) + '</div>'));
     }); });
     return rows.length ? '<p class="muted">Read-only analysis. Open a batch for the separate billing review.</p>' + rows.join('') : '';
   }
@@ -238,9 +257,9 @@
       ['Guardian address', c.address], ['School', c.school], ['District', s.district || c.district], ['Attends school', c.attends], ['Setting', s.setting], ['Service location', c.location]]);
     var items = S.P.queue.filter(function (x) { return x.case_id === s.id && x.status === 'draft'; });
     if (items.length) child += '<p><a href="#/email/' + encodeURIComponent(s.id) + '">' + items.length + ' open item' + (items.length === 1 ? '' : 's') + '</a></p>';
-    var ov = [s.services.join(' · '), s.bcba.length ? 'BCBA ' + s.bcba.map(function (b) { return b.name; }).join(', ') : '', s.setting].filter(Boolean);
+    var ov = [s.services.filter(function (x) { return !(s.bcba.length && /^bcba$/i.test(x)); }).join(' · '), s.bcba.length ? 'BCBA ' + s.bcba.map(function (b) { return b.name; }).join(', ') : '', s.setting].filter(Boolean);
     h += '<div class="card overview"><div class="ov-line">' + esc(ov.join(' · ') || 'No services on file') + '</div>' + (s.why ? '<div class="ov-why">' + esc(s.why) + '</div>' : '') +
-      (s.openRoles.length ? '<div class="ov-why">Unstaffed: ' + esc(s.openRoles.join(', ')) + '</div>' : '') + '</div>';
+      (s.openRoles.length && !/unstaff/i.test(s.why) ? '<div class="ov-why">Unstaffed: ' + esc(s.openRoles.join(', ')) + '</div>' : '') + '</div>';
     h += recordSection('Child info', child, 'No child details connected.', [c.age != null && c.age !== '' ? 'Age ' + c.age : '', c.school, s.setting].filter(Boolean).join(' · '));
     var cases = s.caseRecords.map(function (r) {
       return recordItem('<h3>' + esc(r.number ? 'Case # ' + r.number : 'Case record') + '</h3>' + presentKV([
@@ -257,7 +276,7 @@
     if (s.openRoles.length) team += '<p>' + pill('Open: ' + s.openRoles.join(', '), 'warn') + '</p>';
     if (s.departed.length) team += '<p class="muted">Left the case: ' + esc(s.departed.join(', ')) + '</p>';
     var nTeam = S.P.providers.filter(function (p) { return p.cases.some(function (x) { return x.case_id === s.id; }); }).length;
-    h += recordSection('Providers', team, 'No providers connected.', plural(nTeam, 'provider') + (s.openRoles.length ? ' · ' + s.openRoles.length + ' unstaffed' : ''));
+    h += recordSection('Providers', team, 'No providers connected.', (nTeam ? plural(nTeam, 'provider') : 'No provider assigned') + (s.openRoles.length ? ' · ' + s.openRoles.length + ' unstaffed' : ''));
     var plan = M.weekPlan(S.P).filter(function (a) { return a.case_id === s.id; }), mins = plan.reduce(function (n, a) { return n + a.minutes; }, 0);
     var schedule = (plan.some(function (a) { return a.slots.length; }) ? miniWeek(plan) : '') + plan.map(function (a) {
       var vs = a.vsMandate === 'under' || a.vsMandate === 'over' ? pill('Scheduled ' + M.fmtHours(a.minutes) + ', mandate ' + M.fmtHours(a.mandateMin), 'warn') : '';
@@ -266,7 +285,7 @@
     }).join('');
     // Chart schedule has its own provenance; it is not evidence of delivered sessions.
     if (c.schedule && !plan.some(function (a) { return a.schedule === c.schedule; })) schedule += presentKV([['Chart schedule', c.schedule], ['Chart hours / week', c.hours]]);
-    if (plan.length) schedule += '<p><a href="#/providers" data-act="cal-open" data-who="s:' + esc(s.id) + '">Open in calendar</a></p>';
+    if (plan.some(function (a) { return a.slots.length; })) schedule += '<p><a href="#/providers" data-act="cal-open" data-who="s:' + esc(s.id) + '">Open in calendar</a></p>';
     h += recordSection('Schedule', schedule, 'No schedule connected.', mins ? M.fmtHours(mins) + ' a week scheduled' + (plan.some(function (a) { return a.vsMandate === 'under' || a.vsMandate === 'over'; }) ? ' · differs from mandate' : '') : plural(plan.length, 'assignment'));
     var bm = function (l) { return l.case_id === s.id && l.case_status === 'matched'; };
     h += recordSection('Billing', recordBilling(bm), 'No billing lines for this child.', billingSummary(bm));
@@ -299,7 +318,7 @@
       h += info('These notes name a student the app could not match to exactly one record, so they are not attached to anyone. The name is shown exactly as the source wrote it. Linking them needs your confirmation.');
       if (!U.length) return h + '<div class="list-empty">' + (C.unmatched ? C.unmatched + ' notes are not linked, but the API does not send their text yet.' : 'None.') + '</div>';
       var ul = M.filterNotes(U, { q: f.q, from: f.from, to: f.to });
-      h += '<p class="muted">' + ul.length + ' of ' + U.length + ' not-linked notes</p>';
+      h += '<p class="muted">' + ul.length + ' of ' + U.length + ' not-linked notes' + (ul.length > 200 ? ' · showing the newest 200, search to see the rest' : '') + '</p>';
       ul.slice(0, 200).forEach(function (n) { h += noteCard(n, false); });
       return h;
     }
@@ -314,8 +333,11 @@
       (active.length ? '<p><a href="#/notes" data-act="nf-clear">Clear filters</a></p>' : '') + '</div></details>';
     var list = M.filterNotes(C.notes, f);
     if (stu) h += card('<b>' + esc(stu.name) + '</b><div class="muted">' + esc(stu.services.join(' · ') || 'No services on file') + '</div>' + (stu.goals ? '<div>Goals: ' + esc(stu.goals) + '</div>' : '<div class="muted">Treatment goals are not in the connected sources yet.</div>') + '<a href="#/student/' + encodeURIComponent(stu.id) + '">Open student</a>');
-    h += '<p class="muted">' + list.length + ' of ' + C.notes.length + ' notes</p>';
-    if (!list.length) h += '<div class="list-empty">No notes for this filter. That does not mean sessions were missed.</div>';
+    if (!C.notes.length) h += '<div class="list-empty">No clinical notes are linked to a student yet.</div>';
+    else {
+      h += '<p class="muted">' + list.length + ' of ' + plural(C.notes.length, 'note') + (list.length > 200 ? ' · showing the newest 200, filter to see the rest' : '') + '</p>';
+      if (!list.length) h += '<div class="list-empty">No notes for this filter. That does not mean sessions were missed.</div>';
+    }
     var lastMonth = '';
     list.slice(0, 200).forEach(function (n) {
       var mo = n.date.slice(0, 7); if (mo !== lastMonth) { lastMonth = mo; h += '<div class="sec-mini month">' + esc(monthName(mo)) + '</div>'; }
@@ -411,12 +433,13 @@
     h += '<div class="day-strip" role="tablist">' + W.days.map(function (d) {
       var n = d.events.length;
       return '<button type="button" role="tab" class="day' + (d.date === S.cal.day ? ' on' : '') + (d.isToday ? ' today' : '') + '" data-act="cal-day" data-date="' + esc(d.date) + '" aria-selected="' + (d.date === S.cal.day) + '">' +
-        '<span>' + esc(d.label) + '</span><b>' + esc(+d.date.slice(8)) + '</b><small>' + (n ? n : '–') + '</small></button>';
+        '<span aria-hidden="true">' + esc(d.label) + '</span><b aria-hidden="true">' + esc(+d.date.slice(8)) + '</b><small aria-hidden="true">' + (n ? n : '–') + '</small>' +
+        '<span class="sr">' + esc(d.label + ' ' + dshort(d.date) + ', ' + (n ? plural(n, 'session') : 'no sessions')) + '</span></button>';
     }).join('') + '</div>';
     var opts = { hideProvider: !!sc.providerKey, hideStudent: !!sc.caseId };
     var sel = W.days.filter(function (d) { return d.date === S.cal.day; })[0];
     h += '<div class="agenda">' + card('<div class="sec-mini">' + esc(sel.label + ', ' + dshort(sel.date)) + (sel.isToday ? ' · today' : '') + '</div>' +
-      (sel.events.length ? sel.events.map(function (e) { return eventCard(e, opts); }).join('') : '<p class="muted">Nothing scheduled.</p>')) + '</div>';
+      (sel.events.length ? sel.events.map(function (e) { return eventCard(e, opts); }).join('') : '<p class="muted">' + (W.days.some(function (d) { return d.events.length; }) ? 'Nothing scheduled this day. Tap another day above.' : 'Nothing scheduled this week.') + '</p>')) + '</div>';
     h += '<div class="week-grid">' + W.days.map(function (d) {
       return '<div class="wcol' + (d.isToday ? ' today' : '') + '"><div class="wcol-h">' + esc(d.label) + ' <b>' + esc(+d.date.slice(8)) + '</b></div>' +
         (d.events.length ? d.events.map(function (e) { return eventCard(e, opts); }).join('') : '<p class="muted">–</p>') + '</div>';
@@ -427,10 +450,12 @@
     W.mandate.forEach(function (a) { att.push('<a href="#/student/' + encodeURIComponent(a.case_id) + '">' + esc(a.student) + '</a> · ' + esc(a.role) + ': scheduled ' + esc(M.fmtHours(a.minutes)) + ' a week, mandate ' + esc(M.fmtHours(a.mandateMin)) + '.'); });
     var gapsHere = S.P.gaps.filter(function (g) { return !sc.caseId || g.case_id === sc.caseId; });
     if (!sc.providerKey) gapsHere.forEach(function (g) { att.push('<a href="#/student/' + encodeURIComponent(g.case_id) + '">' + esc(g.student) + '</a> · ' + esc(g.role) + ' is unstaffed.' + coverHint(g.role)); });
-    if (att.length) h += card('<b>Needs attention this week</b>' + att.map(function (x) { return '<div class="att">' + x + '</div>'; }).join(''));
+    var thisWeek = W.monday === M.weekStart(t);
+    if (att.length) h += card('<b>Needs attention' + (thisWeek ? ' this week' : ', ' + esc(dshort(W.monday) + ' to ' + dshort(W.sunday))) + '</b>' + att.map(function (x) { return '<div class="att">' + x + '</div>'; }).join(''));
     var off = W.offCalendar.filter(function (o) { return !o.open || o.text; });
     if (off.length) h += '<details class="card"><summary><b>Not on the calendar (' + off.length + ')</b></summary><p class="muted">These schedules have no day and time the app can read, so they are shown as written.</p>' +
       off.map(function (o) { return '<div class="att"><a href="#/student/' + encodeURIComponent(o.case_id) + '">' + esc(o.student) + '</a> · ' + esc(o.role) + (o.provider ? ' · ' + esc(o.provider) : '') + '<div class="muted">' + esc(o.text || 'No schedule on file') + '</div></div>'; }).join('') + '</details>';
+    if (!thisWeek) h += '<p class="muted">' + (W.monday < M.weekStart(t) ? 'This shows today\u2019s schedule on a past week. Schedule changes are not recorded, so it may differ from what was planned then.' : 'This shows today\u2019s schedule on a future week. It changes if the Provider Hub changes.') + '</p>';
     h += '<p class="src">From the Provider Hub schedules' + (W.notesAvailable ? ' and clinical notes. A day with no note is not a missed session.' : '. Clinical notes are not connected, so past days show no note status.') + '</p>';
     return h;
   }
@@ -487,7 +512,7 @@
       var r = b.review[i] || { state: 'needs_review', reasons: [] }, st = STATE[r.state] || STATE.needs_review, checked = !!b.audit.checks[l.id];
       h += card('<div class="row"><div class="grow"><b>' + esc(l.date || 'No date') + ' · ' + esc(l.student) + '</b><small>' + esc((l.service || 'No service') + ' · ' + (l.provider || 'No provider') + ' · ' +
         (l.duration_min != null ? l.duration_min + ' min' : 'no duration') + (l.units != null ? ' · ' + l.units + ' units' : '')) + '</small></div>' + pill(st[0], st[1]) + '</div>' +
-        '<div class="muted">' + r.reasons.map(esc).join('<br>') + '</div>' + (ctx[i] ? '<div class="sched-ctx">' + ctx[i] + '</div>' : '') +
+        '<div class="muted">' + r.reasons.map(function (x) { return esc(plainReason(x, r)); }).join('<br>') + '</div>' + (ctx[i] ? '<div class="sched-ctx">' + ctx[i] + '</div>' : '') +
         (r.note ? '<div class="src">Note: <a href="#/note/' + encodeURIComponent(r.note.id) + '">' + esc(r.note.date + ' · ' + (r.note.service || '') + ' · ' + r.note.provider + (r.note.duration_min ? ' · ' + r.note.duration_min + ' min' : '')) + '</a></div>' : '') +
         (r.state === 'aligned' ? '<label class="check-row" style="margin-top:8px"><input type="checkbox" data-change="bill-check" data-batch="' + esc(b.id) + '" data-line="' + esc(l.id) + '"' + (checked ? ' checked' : '') + (signed ? ' disabled' : '') + '> <span>I checked this line against the note</span></label>' : ''));
     });
@@ -495,7 +520,7 @@
     if (b.audit.flags.length) h += warn('<b>Flagged for correction:</b><br>' + b.audit.flags.map(function (f) { return esc(f.ts.slice(0, 10) + (f.line_id ? ' · line ' + f.line_id : '') + ': ' + f.reason); }).join('<br>'));
     if (signed) h += info('<b>Signed off</b> ' + esc(b.audit.signoff.ts) + (persisted ? ' · saved in the Billing Audit log.' : ' · preview only, not saved.'));
     else {
-      h += card('<b>Sign off</b><p class="muted">' + (b.blocker ? 'Not yet: ' + esc(b.blocker) + '.' : 'All lines align with notes and you checked each one.') + '</p>' +
+      h += card('<b>Sign off</b><p class="muted">' + (b.blocker ? 'Not yet: ' + esc(plainBlocker(b.blocker)) + '.' : 'All lines align with notes and you checked each one.') + '</p>' +
         '<button type="button" class="btn" data-act="bill-sign" data-batch="' + esc(b.id) + '"' + (b.blocker ? ' disabled' : '') + '>Sign off this batch</button>');
       h += '<details class="card"><summary><b>Flag for correction</b></summary><div class="selects"><label for="flagLine">Line (optional)</label><select id="flagLine">' + opt('', 'Whole batch', true) +
         b.lines.map(function (l) { return opt(l.id, l.date + ' · ' + l.provider, false); }).join('') + '</select><label for="flagReason">What needs correcting (required)</label><textarea id="flagReason" class="field" rows="2"></textarea></div>' +
@@ -515,10 +540,13 @@
       if (!d || !mine.length || !mine.some(function (a) { return a.slots.length; })) { out.push(''); return; }
       var dow = d.getDay(), sl = []; mine.forEach(function (a) { a.slots.forEach(function (x) { if (x.day === dow) sl.push(M.timeRange(x)); }); });
       var k = l.case_id + '|' + p.key + '|' + M.weekStart(l.date); week[k] = (week[k] || 0) + (+l.duration_min || 0);
-      out.push({ k: k, man: mine[0].mandateMin, txt: sl.length ? 'On the schedule that day: ' + sl.join(', ') : pill('Not on the schedule that ' + M.DAY_LABEL[dow], 'warn') });
+      out.push({ k: k, man: mine[0].mandateMin, txt: sl.length ? 'On the schedule that day: ' + sl.join(', ') : pill('No ' + ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dow] + ' session on the schedule', 'warn') });
     });
     return out.map(function (o) { if (!o) return ''; return o.txt + (o.man != null && week[o.k] > o.man + 5 ? ' ' + pill('Billed ' + M.fmtHours(week[o.k]) + ' that week, mandate ' + M.fmtHours(o.man), 'warn') : ''); });
   }
+  // billing-core wording stays as is (it is the audited logic); the screen drops internal note IDs and '(s)'.
+  function plainReason(x, r) { x = String(x).replace(/^Student, date, provider, service, duration match/, 'Student, date, provider, service and duration match'); return r && r.note ? x.replace(/ match note N[0-9a-f]{6,}$/, ' match the note below') : x; }
+  function plainBlocker(x) { return String(x || '').replace(/^(\d+) line\(s\)( do not| not)/, function (m, n, rest) { return n + (n === '1' ? ' line' : ' lines') + (n === '1' && rest === ' do not' ? ' does not' : rest); }); }
   function uniqList(a, k) { return a.map(function (x) { return x[k]; }).filter(function (x, i, arr) { return x && arr.indexOf(x) === i; }).join(', '); }
 
   /* ---------- REPORTS ---------- */
@@ -526,25 +554,25 @@
     ensureClinical();
     var r = S.rep, h = head('Reports & Updates');
     if (!r.caseId && S.P.students[0]) r.caseId = S.P.students[0].id;
+    if (!S.P.students.length) return h + '<div class="list-empty">No students on file, so there is nothing to report on yet.</div>' + savedReports();
     if (!r.from) r.from = daysAgo(60); if (!r.to) r.to = today(); if (!r.audience) r.audience = 'Parent';
     h += '<div class="selects"><label for="repStudent">Student</label><select id="repStudent" data-change="rep-opt" data-k="caseId">' + S.P.students.map(function (s) { return opt(s.id, s.name, s.id === r.caseId); }).join('') + '</select>' +
       '<div class="two"><div><label for="repFrom">From</label><input type="date" id="repFrom" data-change="rep-opt" data-k="from" value="' + esc(r.from) + '"></div><div><label for="repTo">To</label><input type="date" id="repTo" data-change="rep-opt" data-k="to" value="' + esc(r.to) + '"></div></div>' +
       '<label for="repAudience">Audience</label><select id="repAudience" data-change="rep-opt" data-k="audience">' + ['Parent', 'School', 'Internal'].map(function (a) { return opt(a, a, a === r.audience); }).join('') + '</select></div>';
     if (S.clinical && !S.clinical.available) h += warn('Clinical notes are not connected (' + esc(S.clinical.reason) + '). Drafts need notes to say anything.');
     h += '<p style="margin:14px 0"><button type="button" class="btn" data-act="rep-create"' + (!S.clinical || S.loading.clinical ? ' disabled' : '') + '>Create draft from notes</button></p>';
+    if (!S.clinical || S.loading.clinical) h += '<p class="muted" style="margin-top:-6px">Loading clinical notes…</p>';
     var d = S.reportDraft;
     if (d) {
       h += '<div class="print-area"><div class="sec">Draft · awaiting your review</div>' + d.warnings.map(function (w) { return warn(esc(w)); }).join('') +
         '<textarea id="repBody" class="field draft" data-input="rep-body" rows="16" aria-label="Draft text">' + esc(d.body) + '</textarea>' +
-        '<pre class="print-copy"></pre><div class="src">Sources: ' + (d.sources.length ? d.sources.map(function (s) { return '<a href="#/note/' + encodeURIComponent(s.id) + '">' + esc(s.label) + '</a>'; }).join(' · ') : 'none') + '</div>' +
+        '<pre class="print-copy"></pre><div class="src">' + (d.sources.length ? 'Sources (' + d.sources.length + ' notes):<ul class="sources">' + d.sources.map(function (s) { return '<li><a href="#/note/' + encodeURIComponent(s.id) + '">' + esc(s.label) + '</a></li>'; }).join('') + '</ul>' : 'Sources: no notes in this period.') + '</div>' +
         '<p class="muted">' + esc(d.limits) + '</p></div>' +
         '<div class="btns"><button type="button" class="btn secondary" data-act="rep-print">Print / PDF</button><button type="button" class="btn secondary" data-act="rep-download">Download text</button></div>' +
         '<p><button type="button" class="btn" data-act="rep-save"' + (v4Missing() ? ' disabled' : '') + '>Save draft to Reports</button></p>' +
         (v4Missing() ? '<p class="muted">Saving needs the v4 API update; print or download works now.</p>' : S.mode === 'fixture' ? '<p class="muted">Preview: saved drafts stay in this tab only.</p>' : '');
     }
-    h += '<div class="sec">Saved reports</div>';
-    if (!S.P.reports.length) h += '<div class="list-empty">No saved reports.</div>';
-    S.P.reports.slice(0, 30).forEach(function (x) { h += '<a class="card row" href="#/report/' + encodeURIComponent(x.id) + '"><div class="grow"><b>' + esc(x.title) + '</b><small>' + esc(x.created.slice(0, 10) + ' · ' + x.kind) + '</small></div>' + pill(x.status, x.status === 'draft' ? 'warn' : '') + '<span class="chev"></span></a>'; });
+    h += savedReports();
     h += '<details class="card"><summary><b>Other report types</b></summary><div class="selects"><label for="mrStudent">Student status report</label><select id="mrStudent">' + S.P.students.map(function (s) { return opt(s.id, s.name, false); }).join('') + '</select>' +
       '<button type="button" class="btn secondary" data-act="mr-create" data-kind="student" style="margin-top:8px">Create student status</button>' +
       '<label for="mrProvider">Provider hours & billing</label><select id="mrProvider">' + S.P.providers.map(function (p) { return opt(p.name, p.name, false); }).join('') + '</select>' +
@@ -553,10 +581,19 @@
       '<div class="btns" style="margin-top:8px"><button type="button" class="btn secondary" data-act="mr-create" data-kind="intake">Intake status</button><button type="button" class="btn secondary" data-act="mr-create" data-kind="month">Monthly report</button></div></div></details>';
     return h;
   };
+  var KIND = { student: 'Student status', provider: 'Provider hours and billing', intake: 'Intake status', month: 'Monthly report', 'notes-update': 'Update from notes' };
+  function kindLabel(k) { return KIND[k] || (k ? String(k).charAt(0).toUpperCase() + String(k).slice(1) : 'Report'); }
+  function savedReports() {
+    var h = '<div class="sec">Saved reports</div>';
+    if (!S.P.reports.length) h += '<div class="list-empty">No saved reports.</div>';
+    S.P.reports.slice(0, 30).forEach(function (x) { h += '<a class="card row" href="#/report/' + encodeURIComponent(x.id) + '"><div class="grow"><b>' + esc(x.title) + '</b><small>' + esc(String(x.created || '').slice(0, 10) + ' · ' + kindLabel(x.kind)) + '</small></div>' + pill(x.status, x.status === 'draft' ? 'warn' : '') + '<span class="chev"></span></a>'; });
+    if (S.P.reports.length > 30) h += '<p class="muted">Showing the newest 30 of ' + S.P.reports.length + '.</p>';
+    return h;
+  }
   ROUTES.report = function () {
     var r = S.P.reports.filter(function (x) { return x.id === S.params[0]; })[0];
     if (!r) return head('Report', '#/reports', 'Reports') + '<div class="list-empty">Report not found.</div>';
-    return head(r.title, '#/reports', 'Reports') + '<div class="print-area">' + card(pill(r.status, r.status === 'draft' ? 'warn' : '') + ' <span class="muted">' + esc(r.kind + ' · created ' + r.created + (r.updated ? ' · updated ' + r.updated : '')) + '</span>' +
+    return head(r.title, '#/reports', 'Reports') + '<div class="print-area">' + card(pill(r.status, r.status === 'draft' ? 'warn' : '') + ' <span class="muted">' + esc(kindLabel(r.kind) + ' · created ' + r.created + (r.updated ? ' · updated ' + r.updated : '')) + '</span>' +
       '<textarea id="srBody" class="field draft" rows="16" aria-label="Report text">' + esc(r.body) + '</textarea><pre class="print-copy"></pre>') + '</div>' +
       '<div class="btns"><button type="button" class="btn secondary" data-act="sr" data-op="edit" data-id="' + esc(r.id) + '">Save edits</button>' +
       (r.status === 'draft' ? '<button type="button" class="btn" data-act="sr" data-op="done" data-id="' + esc(r.id) + '">Mark reviewed</button>' : '<button type="button" class="btn secondary" data-act="sr" data-op="reopen" data-id="' + esc(r.id) + '">Reopen</button>') + '</div>' +
@@ -566,7 +603,8 @@
 
   /* ---------- EMAIL & OPEN ITEMS ---------- */
   function itemRow(x) {
-    return '<a class="card row" href="#/item/' + encodeURIComponent(x.id) + '"><div class="grow"><b>' + esc(x.title) + '</b><small>' + esc((x.recipient || 'No recipient') + (x.student ? ' · ' + x.student : '') + (x.created ? ' · ' + x.created.slice(0, 10) : '')) + '</small></div><span class="chev"></span></a>';
+    var who = x.recipient && x.title.indexOf(x.recipient) >= 0 ? '' : (x.recipient || 'No recipient');
+    return '<a class="card row" href="#/item/' + encodeURIComponent(x.id) + '"><div class="grow"><b>' + esc(x.title) + '</b><small>' + esc([who, x.student].filter(Boolean).join(' · ') + (x.created ? ' · ' + x.created.slice(0, 10) : '')).replace(/^ · /, '') + '</small></div><span class="chev"></span></a>';
   }
   ROUTES.email = function () {
     var cid = S.params[0] || '', g = M.queueGroups(S.P), stu = cid ? M.student(S.P, cid) : null;
@@ -592,7 +630,7 @@
     var draft = x.status === 'draft';
     var h = head(x.title, '#/email', 'Open items');
     h += card(kv([['Status', esc(x.status), true], ['To', x.recipient], ['Contact', x.contact], ['Channel', x.channel], ['Student', x.case_id ? '<a href="#/student/' + encodeURIComponent(x.case_id) + '">' + esc(x.student) + '</a>' : '', !!x.case_id],
-      ['Provider', x.providerKey ? '<a href="#/provider/' + esc(x.providerKey) + '">' + esc(x.recipient) + '</a>' : '', !!x.providerKey], ['Why', x.triggerName], ['Owner', x.owner]]));
+      ['Provider', x.providerKey ? '<a href="#/provider/' + esc(x.providerKey) + '">' + esc(x.recipient) + '</a>' : '', !!x.providerKey], ['Why', x.triggerName && x.triggerName !== x.trigger ? x.triggerName : x.trigger ? 'Follow-up rule ' + x.trigger + ' (no description on file)' : ''], ['Owner', x.owner]]));
     h += '<div class="selects"><label for="qSubject">Subject</label><input id="qSubject" class="field" value="' + esc(x.subject) + '"' + (draft ? '' : ' readonly') + '>' +
       '<label for="qMessage">Message (draft)</label><textarea id="qMessage" class="field" rows="8"' + (draft ? '' : ' readonly') + '>' + esc(x.message) + '</textarea></div>';
     if (draft) h += '<div class="btns" style="margin-top:10px"><button type="button" class="btn secondary" data-act="q" data-op="edit" data-id="' + esc(x.id) + '">Save draft</button><button type="button" class="btn" data-act="q" data-op="approve" data-id="' + esc(x.id) + '">Approve for Katya</button></div>' +
@@ -609,10 +647,10 @@
     h += card('<b>Data sources</b><dl class="kv" style="margin-top:8px">' +
       src('Case roster', sy.roster_ok, (sy.roster_updated ? 'updated ' + sy.roster_updated : '') + (sy.stale ? ' · out of sync with Case Board' : '')) +
       src('Student chart', P.chartSync && P.chartSync.ok, P.chartSync ? P.chartSync.matched + ' of ' + P.chartSync.rows + ' rows matched' : '') +
-      src('Clinical notes', v && v.clinical.present, v ? v.clinical.rows + ' rows' : 'API update needed') +
-      src('Sessions without notes', v && v.noNote.present, v ? v.noNote.rows + ' rows' : 'API update needed') +
+      src('Clinical notes', v && v.clinical.present, v ? plural(v.clinical.rows, 'row') : 'API update needed') +
+      src('Sessions without notes', v && v.noNote.present, v ? plural(v.noNote.rows, 'row') : 'API update needed') +
       src('Incoming billing', v && v.billing.present, v ? v.billing.rows + ' lines' : 'API update needed') +
-      src('Billing audit log', v && v.audit.present, v ? (v.audit.present ? v.audit.rows + ' entries' : 'created on your first billing decision') : 'API update needed') +
+      (v && !v.audit.present ? '<dt>Billing audit log</dt><dd>' + pill('Not started') + ' <span class="muted">created on your first billing decision</span></dd>' : src('Billing audit log', v && v.audit.present, v ? plural(v.audit.rows, 'entry').replace('entrys', 'entries') : 'API update needed')) +
       '</dl>' + (sy.roster_only && sy.roster_only.length ? '<p class="muted">On roster, not on Case Board: ' + esc(sy.roster_only.join(', ')) + '</p>' : '') +
       (sy.board_only && sy.board_only.length ? '<p class="muted">On Case Board, not on roster: ' + esc(sy.board_only.join(', ')) + '</p>' : '') +
       '<p class="muted">Ensora exports are imported privately into the Clinical Notes tab; they are never part of this public app.</p>');
@@ -635,7 +673,7 @@
     if (S.busy) return Promise.resolve(null);
     S.busy = true;
     return api(action, data).then(function (r) { applyResult(r); if (okMsg) toast(okMsg); return r; })
-      .catch(function (e) { toast(e.message === 'unauthorized' ? 'Key rejected' : 'Not saved: ' + e.message); return null; })
+      .catch(function (e) { toast(e.message === 'unauthorized' ? 'Key rejected' : 'Not saved: ' + plainError(e)); return null; })
       .then(function (r) { S.busy = false; render(); return r; });
   }
   function v(id) { var el = $('#' + id); return el ? String(el.value || '') : ''; }
@@ -707,8 +745,8 @@
     'bill-flag': function (el) { var r = v('flagReason').trim(); if (r.length < 5) return toast('Say what needs correcting'); return billDecide(el.getAttribute('data-batch'), { op: 'flag', line_id: v('flagLine'), reason: r }); },
     'bill-clear': function (el) { var r = v('clearReason').trim(); if (r.length < 5) return toast('Say how it was resolved'); return billDecide(el.getAttribute('data-batch'), { op: 'clear_flag', reason: r }); },
     'bill-sign': function (el) {
-      var b = batch(el.getAttribute('data-batch')); if (!b || b.blocker) return toast(b ? b.blocker : 'Batch not found');
-      if (!confirm('Sign off ' + b.id + '? ' + b.lines.length + ' line(s) match their notes and you checked each one.' + (S.mode === 'fixture' ? ' (Preview: not saved.)' : ' This is recorded in the Billing Audit log.') + ' It does not pay or send anything.')) return;
+      var b = batch(el.getAttribute('data-batch')); if (!b || b.blocker) return toast(b ? plainBlocker(b.blocker) : 'Batch not found');
+      if (!confirm('Sign off ' + b.id + '? ' + (b.lines.length === 1 ? 'The line matches its note' : 'All ' + b.lines.length + ' lines match their notes') + ' and you checked each one.' + (S.mode === 'fixture' ? ' (Preview: not saved.)' : ' This is recorded in the Billing Audit log.') + ' It does not pay or send anything.')) return;
       return billDecide(b.id, { op: 'signoff', confirm: true });
     },
     'forget-key': function () { if (confirm('Remove your key from this device?')) { localStorage.removeItem('ttgops.k'); location.reload(); } },
@@ -744,18 +782,20 @@
       warn('<b>Live data could not be loaded.</b> ' + esc(msg) + '<br>No sample data is shown in its place.') +
       '<button class="btn" id="retryBtn">Try again</button><p class="muted" style="margin-top:16px"><a href="?fixtures=1">Open the fictional preview instead</a></p></div>';
     var rb = $('#retryBtn'); if (rb) rb.onclick = function () { load(); };
+    // Try again by itself when the connection comes back.
+    try { window.addEventListener('online', function once() { window.removeEventListener('online', once); if ($('#retryBtn')) load(); }); } catch (e) {}
   }
   function load() {
     if (S.mode === 'live') {
       if (!KEY) return gate('key');
       if (!allowedApi(apiUrl())) return gate('api');
     }
-    view.innerHTML = '<div class="gate"><p class="muted">Loading…</p></div>';
+    view.innerHTML = '<div class="gate"><div class="brand-row"><img src="icons/icon-192.png" alt=""><div><b>TTG Ops</b><small>Loading your caseload…</small></div></div></div>';
     return api('bootstrap').then(function (d) {
       S.boot = d; S.P = M.normalizeBootstrap(d); S.clinical = null; S.billing = null; route();
     }).catch(function (e) {
       if (/unauthorized/.test(e.message)) return gate('key', KEY ? 'The saved key was not accepted.' : '');
-      errorView(e.message);
+      errorView(plainError(e));
     });
   }
   /* Fixture files are only fetched in fixture mode, so live mode never has sample records in memory. */
