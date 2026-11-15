@@ -770,11 +770,12 @@
   /* ---------- gate / error / start ---------- */
   function gate(kind, msg) {
     var h = '<div class="gate"><div class="brand-row"><img src="icons/icon-192.png" alt=""><div><b>TTG Ops</b><small>Private</small></div></div>' + (msg ? warn(esc(msg)) : '');
-    if (kind === 'key') h += '<p class="muted">Open TTG Ops with your personal admin link, or paste the key once below.</p><input id="gateKey" type="password" autocomplete="off" placeholder="Admin key"><button class="btn" id="gateSaveKey">Save key</button>';
-    else h += '<p class="muted">API address missing. Paste the Apps Script web app /exec URL.</p><input id="gateApi" placeholder="https://script.google.com/macros/s/…/exec"><button class="btn" id="gateSaveApi">Save API address</button>';
+    if (kind === 'key') h += '<p class="muted">Open TTG Ops with your personal admin link, or paste the key once below.</p><input id="gateKey" type="password" autocomplete="off" placeholder="Admin key" aria-label="Admin key"><button class="btn" id="gateSaveKey">Save key</button>';
+    else h += '<p class="muted">API address missing. Paste the Apps Script web app /exec URL.</p><input id="gateApi" placeholder="https://script.google.com/macros/s/…/exec" aria-label="Apps Script web app address"><button class="btn" id="gateSaveApi">Save API address</button>';
     h += '<p class="muted" style="margin-top:16px"><a href="?fixtures=1">Open the fictional preview</a> (sample data only, no connection)</p></div>';
     view.innerHTML = h;
     var sk = $('#gateSaveKey'); if (sk) sk.onclick = function () { var k = ($('#gateKey').value || '').trim(); if (!/^[A-Za-z0-9_-]{20,128}$/.test(k)) return toast('Key looks invalid'); localStorage.setItem('ttgops.k', k); KEY = k; load(); };
+    [['#gateKey', sk], ['#gateApi', null]].forEach(function (x) { var i = $(x[0]); if (i) i.onkeydown = function (e) { if (e.key === 'Enter') { var b = x[1] || $('#gateSaveApi'); if (b) b.onclick(); } }; });
     var sa = $('#gateSaveApi'); if (sa) sa.onclick = function () { var u = ($('#gateApi').value || '').trim(); if (!allowedApi(u)) return toast('Address looks invalid'); localStorage.setItem('ttgops.api', u); load(); };
   }
   function errorView(msg) {
