@@ -37,7 +37,7 @@
     // service_cases is an optional structured source; the current API only exposes a case record ID.
     // Never group records by student name, and never turn assignments into invented authorizations.
     var records = Array.isArray(c.service_cases) && c.service_cases.length ? c.service_cases : [
-      { record_id: c.id, service: (c.assignments || []).map(function (a) { return val(a.role); }).filter(Boolean).join(' · '), auth_end: (c.bank || {}).expiry, source: 'Case Board / roster record. Separate case numbers, rates and full authorization details are not connected.' }
+      { record_id: c.id, service: (c.assignments || []).map(function (a) { return val(a.role); }).filter(Boolean).join(' · '), auth_end: (c.bank || {}).expiry, source: 'Case Board / roster record. Rates and full authorization details are not connected.' }
     ];
     return records.map(function (r) { return {
       recordId: val(r.record_id), service: val(r.service), status: val(r.status), provider: val(r.provider),
