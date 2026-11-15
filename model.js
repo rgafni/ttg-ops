@@ -329,7 +329,7 @@
   function slotMinutes(slots) { return (slots || []).reduce(function (a, s) { return a + (s.end - s.start); }, 0); }
   function hhmm(min) { var h = Math.floor(min / 60), m = min % 60, ap = h >= 12 ? 'PM' : 'AM', h12 = h % 12 || 12; return h12 + (m ? ':' + ('0' + m).slice(-2) : '') + ' ' + ap; }
   function timeRange(s) { var a = hhmm(s.start), b = hhmm(s.end); if (a.slice(-2) === b.slice(-2)) a = a.slice(0, -3); return a + '–' + b; }
-  function fmtHours(min) { var h = Math.round(min / 6) / 10; return (h % 1 ? h.toFixed(1) : String(h)) + ' h'; }
+  function fmtHours(min) { if (min > 0 && min < 60) return Math.round(min) + ' min'; var h = Math.round(min / 6) / 10; return (h % 1 ? h.toFixed(1) : String(h)) + ' h'; }
   function mandateMinutes(m) { var x = str(m).match(/^(\d+(?:\.\d+)?)\s*(?:h|hrs?|hours?)?(?:\s*\/\s*(?:wk|week))?$/i); return x ? Math.round(parseFloat(x[1]) * 60) : null; }
   var SUPERVISE = /\b(bcba|supervis|sup\.?|joint|parent training)\b/i;
   /** Weekly plan for every active assignment, with scheduled vs mandate per assignment. */

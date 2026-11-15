@@ -65,3 +65,12 @@ Provider team/chart entries may explicitly supply `rate`, `hours`, `credentials`
 `documents`, and `ssn_last4`/`ssn`; normalized SSN retains only `***-**-1234`, no reveal.
 Only synthetic fixtures currently exercise these optional fields. A future live
 adapter/data-source change needs separate approval. Nothing is added to URL/storage.
+
+## API v11 (Nov 15 2026)
+One additive field on `clinicalNotes`: `unlinked_notes` (same fields as `notes`, `case_id` always empty, the student name exactly as
+the source wrote it, plus `reason`). It is empty when a `case_id` is requested. The front end shows these only under Clinical Notes >
+"Not linked", never on a student page, in reports or in billing. With an older API the group simply shows the count.
+
+## Calendar (front end only)
+Providers & Schedules opens on a week calendar built from the assignment schedule text the API already sends. No new API field.
+Schedules that do not parse (for example "Zoom" or "TBD") are listed under "Not on the calendar" exactly as written.

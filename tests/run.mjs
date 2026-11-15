@@ -550,6 +550,12 @@ test('public fixture carries no field the live API does not send (OSIS, case num
   const c = FX.bootstrap.cases; assert.ok(c.every(x => !('osis' in x) && !('service_cases' in x) && !('district' in x) && !('goals' in x)));
   assert.ok(c.every(x => (x.team || []).every(m => !('ssn' in m) && !('rate' in m) && !('hours' in m))));
 });
+test('billing: each line shows schedule context in words (on the schedule that day, over the weekly mandate); sign-off rules unchanged', async () => {
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush(); await t.go('#/billing/INV-DEMO-SPEECH'); await flush();
+  assert.match(t.html, /Not on the schedule that Fri/); assert.match(t.html, /Billed 45 min that week, mandate 30 min/);
+  assert.match(t.html, /data-act="bill-sign"[^>]*disabled/);
+  assert.doesNotMatch(read('billing-core.js'), /schedule/i);
+});
 test('public files contain only fictional data: no staff full names, real ids, keys or private links', () => {
   for (const f of ['fixtures/v4-sample.js', 'fixtures/fake-api.js', 'model.js', 'billing-core.js', 'app.js', 'sw.js', 'index.html', 'docs/DEPLOY_PREREQUISITES.md', 'README.md']) {
     const s = read(f);

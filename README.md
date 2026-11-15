@@ -1,7 +1,8 @@
 # TTG Ops
 
 Private clinical oversight front-end for Together They Grow. Phone-first, six portals from a clean Home:
-Students & Cases · Clinical Notes · Providers & Schedules · Billing Review · Reports & Updates · Email & Open Items.
+Students & Cases · Clinical Notes · Providers & Schedules (opens on the week calendar) · Billing Review · Reports & Updates · Email & Open Items.
+Product page: `docs/PRODUCT.md`. Settled decisions: `docs/DECISIONS.md` (append-only).
 
 Front-end only in this public repo. Live case data comes from a private, key-protected Apps Script API and is kept in
 memory only (never in localStorage, links, or the service-worker cache). No admin keys, clinical exports, Ensora files or

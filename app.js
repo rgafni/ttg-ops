@@ -481,12 +481,13 @@
     h += card('<div class="row"><div class="grow"><b>' + esc(b.id) + '</b><small>' + esc(uniqList(b.lines, 'student')) + ' · ' + esc(uniqList(b.lines, 'provider')) + '</small></div>' + billState(b) + '</div>' +
       '<p class="muted" style="margin:6px 0 0">' + (persisted ? 'Your checks, flags and sign-off are saved to the Billing Audit log.' : 'Preview only: checks, flags and sign-off stay in this tab and are NOT saved.') + '</p>' +
       (b.audit.prior_signoff ? warn('This batch changed after an earlier sign-off (' + esc(b.audit.prior_signoff.ts) + '). Review again.') : ''));
+    var ctx = scheduleContext(b.lines);
     h += '<div class="bill-lines">';
     b.lines.forEach(function (l, i) {
       var r = b.review[i] || { state: 'needs_review', reasons: [] }, st = STATE[r.state] || STATE.needs_review, checked = !!b.audit.checks[l.id];
       h += card('<div class="row"><div class="grow"><b>' + esc(l.date || 'No date') + ' · ' + esc(l.student) + '</b><small>' + esc((l.service || 'No service') + ' · ' + (l.provider || 'No provider') + ' · ' +
         (l.duration_min != null ? l.duration_min + ' min' : 'no duration') + (l.units != null ? ' · ' + l.units + ' units' : '')) + '</small></div>' + pill(st[0], st[1]) + '</div>' +
-        '<div class="muted">' + r.reasons.map(esc).join('<br>') + '</div>' +
+        '<div class="muted">' + r.reasons.map(esc).join('<br>') + '</div>' + (ctx[i] ? '<div class="sched-ctx">' + ctx[i] + '</div>' : '') +
         (r.note ? '<div class="src">Note: <a href="#/note/' + encodeURIComponent(r.note.id) + '">' + esc(r.note.date + ' · ' + (r.note.service || '') + ' · ' + r.note.provider + (r.note.duration_min ? ' · ' + r.note.duration_min + ' min' : '')) + '</a></div>' : '') +
         (r.state === 'aligned' ? '<label class="check-row" style="margin-top:8px"><input type="checkbox" data-change="bill-check" data-batch="' + esc(b.id) + '" data-line="' + esc(l.id) + '"' + (checked ? ' checked' : '') + (signed ? ' disabled' : '') + '> <span>I checked this line against the note</span></label>' : ''));
     });
@@ -504,6 +505,20 @@
     if (b.audit.history && b.audit.history.length) h += '<details class="card"><summary><b>Audit history</b></summary>' + b.audit.history.map(function (x) { return '<div class="muted">' + esc(x.ts + ' · ' + x.op + (x.line_id ? ' · ' + x.line_id : '') + (x.reason ? ' · ' + x.reason : '')) + '</div>'; }).join('') + '</details>';
     return h;
   };
+  // Schedule context for each billed line (read-only, for Roni's judgment): was this child scheduled with this provider that weekday,
+  // and do the billed hours that week go past the weekly mandate? Never blocks or changes sign-off; billing rules stay in billing-core.
+  function scheduleContext(lines) {
+    var plan = M.weekPlan(S.P), week = {}, out = [];
+    lines.forEach(function (l) {
+      var p = M.findProvider(S.P.providers, l.provider), d = /^\d{4}-\d{2}-\d{2}$/.test(l.date || '') ? new Date(l.date + 'T12:00:00') : null;
+      var mine = plan.filter(function (a) { return a.case_id === l.case_id && p && a.providerKey === p.key; });
+      if (!d || !mine.length || !mine.some(function (a) { return a.slots.length; })) { out.push(''); return; }
+      var dow = d.getDay(), sl = []; mine.forEach(function (a) { a.slots.forEach(function (x) { if (x.day === dow) sl.push(M.timeRange(x)); }); });
+      var k = l.case_id + '|' + p.key + '|' + M.weekStart(l.date); week[k] = (week[k] || 0) + (+l.duration_min || 0);
+      out.push({ k: k, man: mine[0].mandateMin, txt: sl.length ? 'On the schedule that day: ' + sl.join(', ') : pill('Not on the schedule that ' + M.DAY_LABEL[dow], 'warn') });
+    });
+    return out.map(function (o) { if (!o) return ''; return o.txt + (o.man != null && week[o.k] > o.man + 5 ? ' ' + pill('Billed ' + M.fmtHours(week[o.k]) + ' that week, mandate ' + M.fmtHours(o.man), 'warn') : ''); });
+  }
   function uniqList(a, k) { return a.map(function (x) { return x[k]; }).filter(function (x, i, arr) { return x && arr.indexOf(x) === i; }).join(', '); }
 
   /* ---------- REPORTS ---------- */
