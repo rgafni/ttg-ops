@@ -31,7 +31,7 @@ function server(data, { v4 = true, fail = null } = {}) {
   };
   return { fetchImpl, calls };
 }
-const ROUTES = ['#/', '#/review', '#/students', '#/notes', '#/providers', '#/providers/schedules', '#/billing', '#/reports', '#/email', '#/settings', '#/search'];
+const ROUTES = ['#/', '#/review', '#/students', '#/students/bcba', '#/notes', '#/notes/unlinked', '#/providers', '#/providers/list', '#/providers/schedules', '#/billing', '#/reports', '#/email', '#/settings', '#/search'];
 async function allRoutes(t, extra = []) {
   const out = {};
   const P = t.app.S.P;
@@ -386,7 +386,7 @@ test('REGRESSION SW: requests with a query (e.g. ?k=) are never cached; shell ca
   await flush();
   assert.ok(!puts.some(p => /\?|SECRET/.test(p)), 'cached a query URL: ' + puts);
   assert.deepStrictEqual(puts, ['https://rgafni.github.io/ttg-ops/app.js']);
-  assert.match(read('sw.js'), /ttgops-v10/);
+  assert.match(read('sw.js'), /ttgops-v11/);
   assert.ok(read('app.js').includes("navigator.serviceWorker.register('sw.js')"), 'app must register the new worker so old caches are purged');
 });
 /* Student/provider record redesign. Optional fields (OSIS, case numbers, rates, SSN) are NOT sent by the live API today, so the
@@ -469,6 +469,87 @@ test('records: empty and hostile optional record fields are hidden/escaped and u
   const p = t.app.S.P.providers.find(x => x.name === 'Kai North'); await t.go('#/provider/' + p.key); assert.doesNotMatch(t.html, /<img src=x|href="javascript:/);
 });
 
+/* ---------- overnight Nov 15: calendar, records, review, notes ---------- */
+test('calendar: schedule parser reads real-world formats strictly and leaves anything else as text', () => {
+  const P = s => M.parseSchedule(s), L = r => r.slots.map(x => M.DAY_LABEL[x.day] + ' ' + M.timeRange(x) + (x.note ? ' [' + x.note + ']' : '')).join(' | ');
+  assert.equal(L(P('Mon-Fri 3:30-5:30 PM')), 'Mon 3:30–5:30 PM | Tue 3:30–5:30 PM | Wed 3:30–5:30 PM | Thu 3:30–5:30 PM | Fri 3:30–5:30 PM');
+  assert.equal(L(P('Mon/Wed 10:00-10:45 AM')), 'Mon 10–10:45 AM | Wed 10–10:45 AM');
+  assert.equal(L(P('Tue 8:00 AM-2:15 PM (school), 2:30-5:30 PM (home)')), 'Tue 8 AM–2:15 PM [school] | Tue 2:30–5:30 PM [home]');
+  assert.equal(L(P('Sat 7:00-11:00 AM; Sun 9:30 AM-1:30 PM')), 'Sat 7–11 AM | Sun 9:30 AM–1:30 PM');
+  assert.equal(L(P('Mon-Thu 11:00-1:00 PM')), 'Mon 11 AM–1 PM | Tue 11 AM–1 PM | Wed 11 AM–1 PM | Thu 11 AM–1 PM');
+  assert.equal(L(P('Fri-Mon 9:00-10:00 AM')), 'Fri 9–10 AM | Sat 9–10 AM | Sun 9–10 AM | Mon 9–10 AM');
+  for (const t of ['Zoom', 'Tue in-school (TBD)', 'Monthly oversight of the data', 'Mon 7:00-5:00', 'Mon 25:00-26:00 PM', 'Someday 3-5 PM', 'Mon 5:00-3:00 PM']) {
+    const r = P(t); assert.equal(r.slots.length, 0, t); assert.equal(r.unparsed.length, 1, t);
+  }
+  assert.equal(M.slotMinutes(P('Mon-Fri 3:00-5:00 PM').slots), 600);
+  assert.equal(M.mandateMinutes('1.5'), 90); assert.equal(M.mandateMinutes('10 h/wk'), 600); assert.equal(M.mandateMinutes('about ten'), null);
+});
+test('calendar: week view flags provider double-booking, skips supervision, compares to mandate, and never calls a missing note a missed session', async () => {
+  const P = M.normalizeBootstrap(FX.bootstrap);
+  const W = M.calendarWeek(P, null, { monday: '2026-11-02', today: '2026-11-15' });
+  assert.equal(W.monday, '2026-11-02'); assert.equal(W.sunday, '2026-11-08'); assert.equal(W.days.length, 7);
+  const mon = W.days[0]; assert.equal(mon.label, 'Mon');
+  const jam = mon.events.filter(e => e.provider === 'Jamie Fern'); assert.equal(jam.length, 2);
+  jam.forEach(e => assert.equal(e.overlaps.length, 1));
+  assert.equal(W.overlapCount, 2, 'each clash counted once: Mon and Wed');
+  const wed = W.days[2]; const sup = wed.events.find(e => e.role === 'BCBA'); assert.ok(sup); assert.equal(sup.overlaps.length, 0);
+  assert.ok(W.mandate.some(a => a.student === 'Riley Fixture' && a.minutes === 180 && a.mandateMin === 240));
+  assert.ok(!W.mandate.some(a => a.student === 'Avery Demo'));
+  // notes overlay: only past days, and only "on file" or "none", never "missed"
+  const C = M.normalizeClinical(FX.clinical, P);
+  const W2 = M.calendarWeek(P, C, { monday: '2026-11-02', today: '2026-11-05' });
+  const ot = W2.days[2].events.find(e => e.role === 'OT'); assert.equal(ot.noteState, 'on_file');
+  assert.ok(W2.days[4].events.every(e => e.noteState === ''), 'future days have no note state');
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush();
+  t.app.S.cal = { monday: '2026-11-02', day: '2026-11-02' }; await t.go('#/providers');
+  assert.match(t.html, /Overlaps Riley Fixture/); assert.match(t.html, /No note on file|Nothing scheduled/); assert.doesNotMatch(t.html, /missed session(?!\.)/i);
+  assert.match(t.html, /scheduled 3 h a week, mandate 4 h/); assert.match(t.html, /a day with no note is not a missed session/i);
+  await t.act('cal-week', { 'data-d': '1' }); assert.equal(t.app.S.cal.monday, '2026-11-09');
+  await t.act('cal-who', {}, { value: 's:' + P.students.find(s => s.name === 'Blake Sample').id });
+  assert.doesNotMatch(t.html.split('class="agenda"')[1].split('Needs attention')[0], /Avery Demo/);
+  assert.equal(t.fetches.length, 0); assert.deepStrictEqual(t.setItems, []);
+});
+test('records: sections open only when tapped, each with a one-line summary; schedule shows the week and a calendar link', async () => {
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush();
+  const a = t.app.S.P.students.find(x => x.name === 'Avery Demo'); await t.go('#/student/' + a.id); await flush();
+  const secs = [...t.html.matchAll(/<details class="card record-section"[^>]*>/g)].map(m => m[0]);
+  assert.equal(secs.length, 7); assert.ok(secs.every(x => !/ open/.test(x)), 'all collapsed');
+  assert.match(t.html, /12 h a week scheduled/); assert.match(t.html, /class="mini-week"/); assert.match(t.html, /data-act="cal-open"/);
+  assert.match(t.html, /4 notes · latest 2026-11-04/); assert.match(t.html, /BCBA Robin Vale/);
+});
+test('students: no unexplained color pills; reasons in words; By BCBA groups students under each BCBA', async () => {
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush();
+  await t.go('#/students');
+  assert.doesNotMatch(t.html, /<span class="pill (warn|bad)">(service|billing|clinical|relationship)<\/span>/);
+  assert.match(t.html, /Speech slot open Thursdays/); assert.match(t.html, /Para unstaffed/); assert.doesNotMatch(t.html, /Para unstaffed · Unstaffed: Para/);
+  await t.go('#/students/bcba');
+  assert.match(t.html, /Robin Vale<\/a> <span class="muted">\d+ students?<\/span>/); assert.match(t.html, /No BCBA on file/);
+});
+test('review: separate sections for messages, reports, billing, gaps and schedule problems; item titles are never bare rule codes', async () => {
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush(); await t.go('#/review'); await flush();
+  for (const sec of ['Messages to approve', 'Reports to review', 'Billing to sign off', 'Coverage gaps', 'Schedule problems']) assert.match(t.html, new RegExp(sec), sec);
+  assert.doesNotMatch(t.html, /<b>T\d+( –[^<]*)?<\/b>/);
+  await t.go('#/email'); assert.doesNotMatch(t.html, /<b>T\d+( –[^<]*)?<\/b>/); assert.match(t.html, /Draft to Parent of Blake/);
+  const q = M.normalizeBootstrap({ queue: [{ id: 'q1', trigger: 'T9', subject: 'T9 – X', message: '[Internal] Parent has not replied in 30 days. Please check.' }], triggers: [] }).queue[0];
+  assert.equal(q.title, 'Parent has not replied in 30 days.');
+  assert.equal(M.normalizeBootstrap({ queue: [{ id: 'q2', trigger: 'T3', subject: 'BCBA check-in – X' }], triggers: [{ id: 'T3', name: 'BCBA check-in' }] }).queue[0].title, 'BCBA check-in – X');
+});
+test('notes: not-linked notes are shown apart with the name as written, never attached to a student, never in reports', async () => {
+  const P = M.normalizeBootstrap(FX.bootstrap), C = M.normalizeClinical(FX.clinical, P);
+  assert.equal(C.unlinked.length, 2); assert.ok(C.unlinked.every(n => n.case_id === '' && n.unlinked));
+  assert.ok(!C.notes.some(n => /Fixture, Riley/.test(n.student)));
+  const riley = P.students.find(s => s.name === 'Riley Fixture');
+  const d = M.buildReportDraft(riley, C, { from: '2026-10-01', to: '2026-11-30', audience: 'Internal' }); assert.doesNotMatch(d.body, /Manding/);
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush();
+  await t.go('#/notes'); await flush(); assert.match(t.html, /Not linked \(2\)/); assert.doesNotMatch(t.html, /Fixture, Riley R\./);
+  await t.go('#/notes/unlinked'); assert.match(t.html, /Fixture, Riley R\./); assert.match(t.html, /exactly as the source wrote it/);
+  await t.go('#/student/' + riley.id); assert.doesNotMatch(t.html, /Manding/);
+  t.app.S.q = 'manding'; await t.go('#/search'); assert.match(t.html, /Note \(not linked\)/);
+});
+test('public fixture carries no field the live API does not send (OSIS, case numbers, rates, SSN)', () => {
+  const c = FX.bootstrap.cases; assert.ok(c.every(x => !('osis' in x) && !('service_cases' in x) && !('district' in x) && !('goals' in x)));
+  assert.ok(c.every(x => (x.team || []).every(m => !('ssn' in m) && !('rate' in m) && !('hours' in m))));
+});
 test('public files contain only fictional data: no staff full names, real ids, keys or private links', () => {
   for (const f of ['fixtures/v4-sample.js', 'fixtures/fake-api.js', 'model.js', 'billing-core.js', 'app.js', 'sw.js', 'index.html', 'docs/DEPLOY_PREREQUISITES.md', 'README.md']) {
     const s = read(f);
