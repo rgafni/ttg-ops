@@ -228,3 +228,4 @@ details.filters { margin-top: 12px; }
 details.card > summary { position: relative; padding-right: 26px; }
 details.card > summary::after { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
 @media (min-width: 760px) { .tiles { grid-template-columns: repeat(3, 1fr); } .tile { min-height: 128px; } }
+.calls-slot{margin-top:12px}

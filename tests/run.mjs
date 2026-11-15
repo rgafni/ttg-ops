@@ -387,7 +387,7 @@ test('REGRESSION SW: requests with a query (e.g. ?k=) are never cached; shell ca
   await flush();
   assert.ok(!puts.some(p => /\?|SECRET/.test(p)), 'cached a query URL: ' + puts);
   assert.deepStrictEqual(puts, ['https://rgafni.github.io/ttg-ops/app.js']);
-  assert.match(read('sw.js'), /ttgops-v13/);
+  assert.match(read('sw.js'), /ttgops-v14/);
   assert.ok(read('app.js').includes("navigator.serviceWorker.register('sw.js')"), 'app must register the new worker so old caches are purged');
 });
 /* Student/provider record redesign. Optional fields (OSIS, case numbers, rates, SSN) are NOT sent by the live API today, so the
@@ -652,6 +652,24 @@ test('plain copy: open items never show a bare rule code; lists do not repeat th
 test('performance: schedules are parsed once per bootstrap, not on every calendar tap', () => {
   const P = M.normalizeBootstrap(FX.bootstrap); assert.strictEqual(M.weekPlan(P), M.weekPlan(P)); assert.strictEqual(M.providerLoad(P), M.providerLoad(P));
   const P2 = M.normalizeBootstrap(FX.bootstrap); assert.notStrictEqual(M.weekPlan(P2), M.weekPlan(P)); assert.deepStrictEqual(M.weekPlan(P2), M.weekPlan(P));
+});
+
+/* Calls card (Nov 15): live Home only; never fixture/sample mode, never on other screens; loads the shared card from this site. */
+test('calls card: live Home has the slot and loads the shared card from /hub/ only', async () => {
+  const s = server(liveFX()); const t = boot({ key: KEY, fetchImpl: s.fetchImpl }); await flush();
+  await t.go('#/'); assert.match(t.html, /id="callsSlot"/);
+  const view = t.sb.document.querySelector('#view'); view.querySelector = sel => (sel === '#callsSlot' ? {} : null);
+  await t.go('#/review'); await t.go('#/'); await flush();
+  assert.deepStrictEqual(t.scripts, ['/hub/calls-card.js?v=1']);
+  assert.ok(!t.fetches.some(f => /AKfycbzi_/.test(f.u)), 'the host app itself never calls the Calls API');
+  for (const r of ['#/review', '#/students', '#/notes', '#/providers', '#/billing', '#/reports', '#/email', '#/settings']) { await t.go(r); assert.doesNotMatch(t.html, /callsSlot/, r); }
+});
+test('calls card: fixture/sample mode never shows or loads it', async () => {
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush();
+  await t.go('#/'); assert.doesNotMatch(t.html, /callsSlot/);
+  const view = t.sb.document.querySelector('#view'); view.querySelector = () => ({});
+  await t.go('#/review'); await t.go('#/'); await flush();
+  assert.deepStrictEqual(t.scripts.filter(x => /calls-card/.test(x)), []);
 });
 
 for (const [name, fn] of tests) {

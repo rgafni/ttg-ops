@@ -97,6 +97,21 @@
     try { window.scrollTo && S._lastRoute !== location.hash && window.scrollTo(0, 0); } catch (e) {}
     try { var h1 = moved && view.querySelector && view.querySelector('h1'); if (h1) { h1.setAttribute('tabindex', '-1'); h1.focus({ preventScroll: true }); } } catch (e) {}
     S._lastRoute = location.hash;
+    callsCard();
+  }
+  /* Calls card (Plan the day, Check in before a meeting, End of day wrap): live mode on Home only, never in fixture or sample mode.
+     The shared card is loaded from this site and talks only to the Calls API with the Calls key on this phone; that server answers Roni's key only. */
+  function callsCard() {
+    if (S.mode !== 'live' || S.route !== 'home') return;
+    var slot = view.querySelector && view.querySelector('#callsSlot'); if (!slot) return;
+    if (window.CallsCard) { window.CallsCard.mount(slot, 'ttg'); return; }
+    if (S._ccLoad) return; S._ccLoad = true;
+    try {
+      var t = document.createElement('script'); t.src = '/hub/calls-card.js?v=1';
+      t.onload = function () { if (S.mode === 'live' && S.route === 'home' && window.CallsCard) { var sl = view.querySelector('#callsSlot'); if (sl) window.CallsCard.mount(sl, 'ttg'); } };
+      t.onerror = function () { S._ccLoad = false; };
+      document.head.appendChild(t);
+    } catch (e) { S._ccLoad = false; }
   }
 
   /* ---------- HOME ---------- */
@@ -115,6 +130,7 @@
       ['billing', 'Billing\nReview', ICONS.checklist], ['reports', 'Reports\n& Updates', ICONS.bars], ['email', 'Email &\nOpen Items', ICONS.envelope]];
     return '<div class="brand-row"><img src="icons/icon-192.png" alt=""><div><b>TTG Ops</b><small>Oversight workspace</small></div></div>' + banner() +
       '<form data-submit="home-search"><input class="search" id="homeQ" name="q" autocomplete="off" placeholder="Search students, providers, notes" aria-label="Search students, providers, notes and items"></form>' +
+      (S.mode === 'live' ? '<div id="callsSlot" class="calls-slot"></div>' : '') +
       '<a class="card review-link" href="#/review"><span>Needs your review</span><span class="badge' + (n ? '' : ' zero') + '" aria-label="' + plural(n, 'item') + '">' + n + '</span></a>' +
       '<div class="tiles">' + tiles.map(function (t) { return '<a class="tile" href="#/' + t[0] + '"><span class="ico">' + t[2] + '</span><b>' + esc(t[1]) + '</b></a>'; }).join('') + '</div>' +
       '<p class="muted" style="margin-top:16px"><a href="#/settings">Settings &amp; data sources</a></p>';
