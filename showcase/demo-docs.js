@@ -7,7 +7,7 @@ window.SCDOC = function (H) {
   function docBody(s, d) {
     var fn = first(s.name), P = function (h, b) { return '<h3>' + esc(h) + '</h3>' + b; }, p = function (x) { return '<p>' + t(x) + '</p>'; };
     switch (d.type) {
-      case 'fofd': return P('Case', kv([['Case number', s.caseNo], ['Hearing date', s.hearingDate], ['Parent attorney', s.lawyer.name + ', ' + s.lawyer.firm], ['School year', '2026-27']])) +
+      case 'fofd': return P('Case', kv([['Hearing date', s.hearingDate], ['Parent attorney', s.lawyer.name + ', ' + s.lawyer.firm], ['School year', '2026-27']])) +
         P('Background', p(fn + ' is ' + s.age + ' years old and in grade ' + s.grade + ' at ' + s.school + '. ' + s.dx)) +
         P('Findings', ul(['The DOE did not offer ' + fn + ' a free appropriate public education for the 2026-27 school year.', 'The services on the IEP do not address ' + fn + "'s needs in the areas shown by the evaluations.", 'The services requested by the parent are appropriate.'])) +
         P('Order', ul(svcList(s).concat(s.comp.map(function (c) { return c[0] + ', bank of ' + c[1] + ' hours'; })).concat(['Services to be provided by a provider of the parent\u0027s choosing at prevailing rates.']))) + '<div class="sig">Impartial Hearing Officer (fictional)<br>' + fd(s.orderDate) + '</div>';
