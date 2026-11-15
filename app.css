@@ -197,3 +197,4 @@ details.record-section[open] > summary::after { transform: translateY(-50%) rota
 .sec-mini.month { margin: 18px 4px 8px; color: var(--muted); text-transform: uppercase; font-size: 12px; letter-spacing: .05em; }
 details.filters > summary { flex-wrap: wrap; }
 .sched-ctx { font-size: 13px; color: var(--muted); margin-top: 6px; }
+a.card.review-link { display: flex; margin-top: 12px; }
