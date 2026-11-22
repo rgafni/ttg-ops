@@ -233,3 +233,4 @@ details.card > summary::after { position: absolute; right: 0; top: 50%; transfor
 /* Calls card in TTG green (the card's own purple is for Home) */
 body .cc-card, body .cc-sheet, body .cc-toast { --cc-a: #1c3e22; --cc-ab: #e8f2e7; --cc-bd: #cfe0cd; --cc-bg: #fbfdfa; }
 body .cc-toast button { color: #bfe0bb; }
+.svc-line{margin-top:6px}

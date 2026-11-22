@@ -37,8 +37,13 @@
     // service_cases is an optional structured source; the current API only exposes a case record ID.
     // Never group records by student name, and never turn assignments into invented authorizations.
     var records = Array.isArray(c.service_cases) && c.service_cases.length ? c.service_cases : [
-      { record_id: c.id, service: (c.assignments || []).map(function (a) { return val(a.role); }).filter(Boolean).join(' · '), auth_end: (c.bank || {}).expiry,
+      { record_id: c.id, service: '', auth_end: (c.bank || {}).expiry,
         bank_total: (c.bank || {}).total, bank_used: (c.bank || {}).used, bank_pct: (c.bank || {}).pct,
+        // Per-service mandate and authorization end exactly as the Provider Hub assignments state them (real live fields).
+        services: (c.assignments || []).filter(function (a) { return !/^(parent|guardian)$/i.test(str(a.role)) && !GONE.test(str(a.status)); }).map(function (a) {
+          var open = /^(tbd|open|unassigned|vacant|none|n\/a|\?)$/i.test(str(a.provider));
+          return { service: val(a.role), provider: open ? '' : val(a.provider), open: open, mandate: val(a.mandate), authEnd: val(a.auth_expiry), status: val(a.status) };
+        }),
         source: 'Case Board / roster record. Rates and full authorization details are not connected.' }
     ];
     function num(v) { return v == null || v === '' || isNaN(+v) ? '' : String(+v); }
@@ -47,6 +52,7 @@
       authStart: val(r.auth_start), authEnd: val(r.auth_end), hours: val(r.authorized_hours), units: val(r.authorized_units),
       frequency: val(r.frequency), rate: val(r.rate), funding: val(r.funding_source), source: val(r.source),
       // Hour bank from the roster (real live fields): total, used and percent left exactly as the API sends them; never computed here.
+      services: Array.isArray(r.services) ? r.services : [],
       bankTotal: num(r.bank_total), bankUsed: num(r.bank_used), bankLeft: num(r.bank_pct) ? num(r.bank_pct) + '%' : ''
     }; });
   }
@@ -175,7 +181,7 @@
     var ambiguous = students.filter(function (s) { return s.duplicateId || s.sameNameIds.length; });
     var schedules = [];
     students.forEach(function (s) {
-      s.assignments.forEach(function (a) { if (!GONE.test(a.status)) schedules.push({ case_id: s.id, student: s.name, provider: a.open ? '' : a.provider, providerKey: a.open ? '' : ((findProvider(providers, a.provider) || {}).key || ''), role: a.role, schedule: a.schedule, mandate: a.mandate, status: a.status, open: a.open, source: 'Provider Hub assignments' }); });
+      s.assignments.forEach(function (a) { if (!GONE.test(a.status)) schedules.push({ case_id: s.id, student: s.name, provider: a.open ? '' : a.provider, providerKey: a.open ? '' : ((findProvider(providers, a.provider) || {}).key || ''), role: a.role, schedule: a.schedule, mandate: a.mandate, status: a.status, open: a.open, notes: a.notes, source: 'Provider Hub assignments' }); });
     });
     var gaps = (b.unstaffed || []).map(function (g) { return { case_id: str(g.case_id), student: str(g.student), role: str(g.role), since: str(g.since), days: g.days, departed: str(g.departed) }; });
     students.forEach(function (s) { s.openRoles.forEach(function (r) { if (!gaps.some(function (g) { return g.case_id === s.id && g.role.toLowerCase() === r.toLowerCase(); })) gaps.push({ case_id: s.id, student: s.name, role: r, since: '', days: null, departed: '' }); }); });
@@ -355,7 +361,7 @@
   function weekPlanRaw(rows) {
     return rows.map(function (r) {
       var ps = parseSchedule(r.schedule), mins = slotMinutes(ps.slots), man = mandateMinutes(r.mandate);
-      return { case_id: r.case_id, student: r.student, provider: r.provider, providerKey: r.providerKey, role: r.role, open: r.open, schedule: r.schedule,
+      return { case_id: r.case_id, student: r.student, provider: r.provider, providerKey: r.providerKey, role: r.role, open: r.open, schedule: r.schedule, notes: r.notes || '',
         slots: ps.slots, unparsed: ps.unparsed, minutes: mins, mandateMin: man,
         vsMandate: man == null || !ps.slots.length || ps.unparsed.length ? '' : mins < man - 5 ? 'under' : mins > man + 5 ? 'over' : 'match' };
     });

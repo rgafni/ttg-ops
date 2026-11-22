@@ -281,7 +281,11 @@
       return recordItem('<h3>' + 'Case record' + '</h3>' + presentKV([
         ['Record ID', r.recordId], ['Service / discipline', r.service], ['Status', r.status], ['Assigned provider', r.provider], ['Authorization starts', r.authStart], ['Authorization ends', r.authEnd],
         ['Authorized hours', r.hours], ['Authorized units', r.units], ['Frequency', r.frequency], ['Rate', r.rate], ['Funding source', r.funding],
-        ['Hour bank total', r.bankTotal], ['Hours used', r.bankUsed], ['Hour bank left', r.bankLeft]]) + (r.source ? '<p class="src">' + esc(r.source) + '</p>' : ''));
+        ['Hour bank total', r.bankTotal], ['Hours used', r.bankUsed], ['Hour bank left', r.bankLeft]]) +
+        (r.services.length ? '<p class="muted" style="margin-top:8px">By service</p>' + r.services.map(function (v) {
+          return '<div class="svc-line"><b>' + esc(v.service || 'Service') + '</b> · ' + (v.open ? pill('Unstaffed', 'warn') : esc(v.provider || 'No provider named')) +
+            '<div class="muted">' + esc([v.mandate ? 'mandate ' + v.mandate + ' h/week' : 'no mandate on file', v.authEnd ? 'authorization ends ' + v.authEnd : 'no authorization end on file'].join(' · ')) + '</div></div>';
+        }).join('') : '') + (r.source ? '<p class="src">' + esc(r.source) + '</p>' : ''));
     }).join('');
     var auth = s.caseRecords.map(function (r) { return r.authEnd; }).filter(Boolean)[0], left = s.caseRecords.map(function (r) { return r.bankLeft; }).filter(Boolean)[0];
     h += recordSection('Cases', cases + caseEditor(s), 'No case records connected.', plural(s.caseRecords.length, 'case record') + (auth ? ' · authorization ends ' + auth : '') + (left ? ' · hour bank ' + left + ' left' : ''));
@@ -298,7 +302,7 @@
     var schedule = (plan.some(function (a) { return a.slots.length; }) ? miniWeek(plan) : '') + plan.map(function (a) {
       var vs = a.vsMandate === 'under' || a.vsMandate === 'over' ? pill('Scheduled ' + M.fmtHours(a.minutes) + ', mandate ' + M.fmtHours(a.mandateMin), 'warn') : '';
       return recordItem('<b>' + esc(a.role || 'Service') + '</b> · ' + (a.open ? pill('Unstaffed', 'warn') : a.providerKey ? '<a href="#/provider/' + esc(a.providerKey) + '">' + esc(a.provider) + '</a>' : esc(a.provider)) +
-        '<div class="muted">' + esc(a.schedule || 'No schedule on file') + (a.mandateMin != null ? ' · mandate ' + esc(M.fmtHours(a.mandateMin)) + '/week' : '') + '</div>' + (vs ? '<div class="ev-flags">' + vs + '</div>' : ''));
+        '<div class="muted">' + esc(a.schedule || 'No schedule on file') + (a.mandateMin != null ? ' · mandate ' + esc(M.fmtHours(a.mandateMin)) + '/week' : '') + '</div>' + (a.notes ? '<div class="muted">Note: ' + esc(a.notes) + '</div>' : '') + (vs ? '<div class="ev-flags">' + vs + '</div>' : ''));
     }).join('');
     // Chart schedule has its own provenance; it is not evidence of delivered sessions.
     if (c.schedule && !plan.some(function (a) { return a.schedule === c.schedule; })) schedule += presentKV([['Chart schedule', c.schedule], ['Chart hours / week', c.hours]]);

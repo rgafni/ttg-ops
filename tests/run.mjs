@@ -387,7 +387,7 @@ test('REGRESSION SW: requests with a query (e.g. ?k=) are never cached; shell ca
   await flush();
   assert.ok(!puts.some(p => /\?|SECRET/.test(p)), 'cached a query URL: ' + puts);
   assert.deepStrictEqual(puts, ['https://rgafni.github.io/ttg-ops/app.js']);
-  assert.match(read('sw.js'), /ttgops-v18/);
+  assert.match(read('sw.js'), /ttgops-v19/);
   assert.ok(read('app.js').includes("navigator.serviceWorker.register('sw.js')"), 'app must register the new worker so old caches are purged');
 });
 /* Student/provider record redesign. Optional fields (OSIS, case numbers, rates, SSN) are NOT sent by the live API today, so the
@@ -714,6 +714,18 @@ test('records: a provider with no clinical notes gets one plain row, not a secti
   const row = t.html.split('data-section="Clinical data"')[0].split('<').pop() + t.html.split('data-section="Clinical data"')[1].split('</div>')[0];
   assert.match(t.html, /record-section empty" data-section="Clinical data"/); assert.match(row, /No clinical notes for this provider yet\./);
   assert.doesNotMatch(t.html, /No clinical notes connected for this record/);
+});
+
+test('records: Cases lists each service with its mandate and authorization end from the assignments; schedule shows the assignment note', async () => {
+  const s = server(liveFX()), t = boot({ key: KEY, fetchImpl: s.fetchImpl }); await flush();
+  const a = t.app.S.P.students.find(x => x.name === 'Lena Live'); await t.go('#/student/' + a.id); await flush();
+  const cs = t.html.split('data-section="Cases"')[1].split('</section>')[0].replace(/<details class="record-item"[\s\S]*?<\/details>/g, '');
+  assert.match(cs, /By service/); assert.match(cs, /<b>OT<\/b> · Mira South[\s\S]*?mandate 1\.5 h\/week · authorization ends 1\/5\/2027/);
+  const sch = t.html.split('data-section="Schedule"')[1].split('</details>')[0];
+  assert.match(sch, /Note: Thu slot open/);
+  const c = t.app.S.P.students.find(x => x.name === 'Priya True'); await t.go('#/student/' + c.id); await flush();
+  const cc = t.html.split('data-section="Cases"')[1].split('</section>')[0];
+  assert.match(cc, /<b>Para<\/b> · <span[^>]*>Unstaffed/); assert.match(cc, /no mandate on file · no authorization end on file/);
 });
 
 for (const [name, fn] of tests) {
