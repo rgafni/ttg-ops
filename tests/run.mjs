@@ -387,7 +387,7 @@ test('REGRESSION SW: requests with a query (e.g. ?k=) are never cached; shell ca
   await flush();
   assert.ok(!puts.some(p => /\?|SECRET/.test(p)), 'cached a query URL: ' + puts);
   assert.deepStrictEqual(puts, ['https://rgafni.github.io/ttg-ops/app.js']);
-  assert.match(read('sw.js'), /ttgops-v16/);
+  assert.match(read('sw.js'), /ttgops-v17/);
   assert.ok(read('app.js').includes("navigator.serviceWorker.register('sw.js')"), 'app must register the new worker so old caches are purged');
 });
 /* Student/provider record redesign. Optional fields (OSIS, case numbers, rates, SSN) are NOT sent by the live API today, so the
@@ -670,6 +670,42 @@ test('calls card: fixture/sample mode never shows or loads it', async () => {
   const view = t.sb.document.querySelector('#view'); view.querySelector = () => ({});
   await t.go('#/review'); await t.go('#/'); await flush();
   assert.deepStrictEqual(t.scripts.filter(x => /calls-card/.test(x)), []);
+});
+
+/* Nov 22: real bootstrap fields that were sent by the API but dropped on screen. Synthetic data only. */
+test('records: hour bank (total, used, percent left) from the live roster shows in Cases exactly as sent', async () => {
+  const s = server(liveFX()), t = boot({ key: KEY, fetchImpl: s.fetchImpl }); await flush();
+  const a = t.app.S.P.students.find(x => x.name === 'Lena Live'); await t.go('#/student/' + a.id); await flush();
+  const html = t.html.split('data-section="Cases"')[1].split('</section>')[0];
+  assert.match(html, /Hour bank total<\/dt><dd>200/); assert.match(html, /Hours used<\/dt><dd>150/); assert.match(html, /Hour bank left<\/dt><dd>25%/);
+  assert.match(html, /hour bank 25% left/);
+  const b = t.app.S.P.students.find(x => x.name === 'Omar Real'); await t.go('#/student/' + b.id); await flush();
+  const cb = t.html.split('data-section="Cases"')[1].split('</section>')[0].replace(/<details[\s\S]*?<\/details>/g, '');
+  assert.doesNotMatch(cb, /<dt>Hour bank|<dt>Hours used|hour bank/, 'missing bank stays missing');
+});
+test('records: chart-only provider gets the exact cases the API names (case_ids); unknown or duplicated ids link nothing', async () => {
+  const data = liveFX(o => {
+    const cs = o.bootstrap.cases, lena = cs.find(c => c.student === 'Lena Live'), omar = cs.find(c => c.student === 'Omar Real');
+    o.bootstrap.cases.push(Object.assign(clone(omar), { student: 'Omar Real Twin' }));   // same id twice: ambiguous
+    o.bootstrap.chart_sync.providers.push({ name: 'Quinn Chartonly', provider_id: 'PDQ', discipline: 'OT', phone: '555-0199', email: 'quinn@example.com', case_ids: [lena.id, 'NO-SUCH-ID', omar.id] });
+  });
+  const s = server(data), t = boot({ key: KEY, fetchImpl: s.fetchImpl }); await flush();
+  const q = t.app.S.P.providers.find(p => p.name === 'Quinn Chartonly');
+  assert.equal(JSON.stringify(q.cases.map(c => c.student)), '["Lena Live"]');
+  await t.go('#/provider/' + q.key); await flush();
+  assert.match(t.html.split('data-section="Case roster &amp; schedule"')[1] || t.html.split('data-section="Case roster & schedule"')[1], /Lena Live/);
+  const lena = t.app.S.P.students.find(x => x.name === 'Lena Live'); await t.go('#/student/' + lena.id); await flush();
+  assert.match(t.html.split('data-section="Providers"')[1].split('</section>')[0], /Quinn Chartonly/);
+});
+test('records: chart age written as text shows when there is no date of birth; intake welcome documents show (not the "not found" placeholder)', async () => {
+  const data = liveFX(o => { const c = o.bootstrap.cases.find(x => x.student === 'Lena Live'); c.chart.dob = ''; c.chart.age = null; c.chart.age_text = '6 years'; c.intake.welcome = 'Sent 2026-10-01'; });
+  const s = server(data), t = boot({ key: KEY, fetchImpl: s.fetchImpl }); await flush();
+  const a = t.app.S.P.students.find(x => x.name === 'Lena Live'); await t.go('#/student/' + a.id); await flush();
+  assert.match(t.html, /Age<\/dt><dd>6 years/); assert.match(t.html, /Welcome documents<\/dt><dd>Sent 2026-10-01/);
+  const d2 = liveFX(o => { o.bootstrap.cases.find(x => x.student === 'Lena Live').intake.welcome = 'Not found in email'; });
+  const s2 = server(d2), t2 = boot({ key: KEY, fetchImpl: s2.fetchImpl }); await flush();
+  await t2.go('#/student/' + t2.app.S.P.students.find(x => x.name === 'Lena Live').id); await flush();
+  assert.doesNotMatch(t2.html, /Welcome documents/);
 });
 
 for (const [name, fn] of tests) {

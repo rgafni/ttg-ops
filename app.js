@@ -280,10 +280,11 @@
     var cases = s.caseRecords.map(function (r) {
       return recordItem('<h3>' + 'Case record' + '</h3>' + presentKV([
         ['Record ID', r.recordId], ['Service / discipline', r.service], ['Status', r.status], ['Assigned provider', r.provider], ['Authorization starts', r.authStart], ['Authorization ends', r.authEnd],
-        ['Authorized hours', r.hours], ['Authorized units', r.units], ['Frequency', r.frequency], ['Rate', r.rate], ['Funding source', r.funding]]) + (r.source ? '<p class="src">' + esc(r.source) + '</p>' : ''));
+        ['Authorized hours', r.hours], ['Authorized units', r.units], ['Frequency', r.frequency], ['Rate', r.rate], ['Funding source', r.funding],
+        ['Hour bank total', r.bankTotal], ['Hours used', r.bankUsed], ['Hour bank left', r.bankLeft]]) + (r.source ? '<p class="src">' + esc(r.source) + '</p>' : ''));
     }).join('');
-    var auth = s.caseRecords.map(function (r) { return r.authEnd; }).filter(Boolean)[0];
-    h += recordSection('Cases', cases + caseEditor(s), 'No case records connected.', plural(s.caseRecords.length, 'case record') + (auth ? ' · authorization ends ' + auth : ''));
+    var auth = s.caseRecords.map(function (r) { return r.authEnd; }).filter(Boolean)[0], left = s.caseRecords.map(function (r) { return r.bankLeft; }).filter(Boolean)[0];
+    h += recordSection('Cases', cases + caseEditor(s), 'No case records connected.', plural(s.caseRecords.length, 'case record') + (auth ? ' · authorization ends ' + auth : '') + (left ? ' · hour bank ' + left + ' left' : ''));
     var team = S.P.providers.filter(function (p) { return p.cases.some(function (x) { return x.case_id === s.id; }); }).map(function (p) {
       var roles = p.cases.filter(function (x) { return x.case_id === s.id; }).map(function (x) { return x.role; }).filter(Boolean);
       return recordItem('<a href="#/provider/' + esc(p.key) + '">' + esc(p.name) + '</a>' + presentKV([['Discipline', roles.join(' · ')], ['Phone', p.phone], ['Email', p.email]]));
@@ -306,7 +307,7 @@
     var bm = function (l) { return l.case_id === s.id && l.case_status === 'matched'; };
     h += recordSection('Billing', recordBilling(bm), 'No billing lines for this child.', billingSummary(bm));
     var it = s.intake, en = s.ensora, docs = docLinks(s.documents);
-    if (it) docs += presentKV([['Intake status', it.status], ['Received', it.received], ['Missing documents', it.missing]]) + it.links.map(function (u, i) { return '<p>' + ext(u, 'Document folder ' + (i + 1)) + '</p>'; }).join('');
+    if (it) docs += presentKV([['Intake status', it.status], ['Received', it.received], ['Missing documents', it.missing], ['Welcome documents', it.welcome]]) + it.links.map(function (u, i) { return '<p>' + ext(u, 'Document folder ' + (i + 1)) + '</p>'; }).join('');
     if (en) docs += presentKV([['Ensora records', en.data], ['Last capture', en.last], ['Missing records', en.missing]]) + (en.sourceUrl ? '<p>' + ext(en.sourceUrl, 'Ensora source') + '</p>' : '');
     S.P.reports.filter(function (r) { return r.scope === s.name; }).forEach(function (r) { docs += recordItem('<a href="#/report/' + encodeURIComponent(r.id) + '">' + esc(r.title) + '</a> ' + pill(r.status, r.status === 'draft' ? 'warn' : '')); });
     var nRep = S.P.reports.filter(function (r) { return r.scope === s.name; }).length;
