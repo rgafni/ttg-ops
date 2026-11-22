@@ -496,7 +496,8 @@
     S.P.reports.filter(function (r) { return r.kind === 'provider' && r.scope === p.name; }).forEach(function (r) { docs += recordItem('<a href="#/report/' + encodeURIComponent(r.id) + '">' + esc(r.title) + '</a>'); });
     h += recordSection('Documents', docs, 'No provider documents connected.', docs ? plural((docs.match(/class="record-item"/g) || []).length, 'item') : '');
     var notes = S.clinical && S.clinical.available ? S.clinical.notes.filter(function (x) { return x.providerKey === p.key; }) : [];
-    h += recordSection('Clinical data', clinicalSummary(notes, '#/notes', ' data-act="notes-by-provider" data-key="' + esc(p.key) + '"'), 'No clinical notes for this provider.', notes.length ? plural(notes.length, 'note') : S.clinical && S.clinical.available ? 'No notes yet' : '');
+    var noNotes = !notes.length && S.clinical && S.clinical.available && !S.loading.clinical;   // nothing to open: plain row, said once
+    h += recordSection('Clinical data', noNotes ? '' : clinicalSummary(notes, '#/notes', ' data-act="notes-by-provider" data-key="' + esc(p.key) + '"'), 'No clinical notes for this provider yet.', notes.length ? plural(notes.length, 'note') : '');
     return h;
   };
 

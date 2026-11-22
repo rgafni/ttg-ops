@@ -387,7 +387,7 @@ test('REGRESSION SW: requests with a query (e.g. ?k=) are never cached; shell ca
   await flush();
   assert.ok(!puts.some(p => /\?|SECRET/.test(p)), 'cached a query URL: ' + puts);
   assert.deepStrictEqual(puts, ['https://rgafni.github.io/ttg-ops/app.js']);
-  assert.match(read('sw.js'), /ttgops-v17/);
+  assert.match(read('sw.js'), /ttgops-v18/);
   assert.ok(read('app.js').includes("navigator.serviceWorker.register('sw.js')"), 'app must register the new worker so old caches are purged');
 });
 /* Student/provider record redesign. Optional fields (OSIS, case numbers, rates, SSN) are NOT sent by the live API today, so the
@@ -706,6 +706,14 @@ test('records: chart age written as text shows when there is no date of birth; i
   const s2 = server(d2), t2 = boot({ key: KEY, fetchImpl: s2.fetchImpl }); await flush();
   await t2.go('#/student/' + t2.app.S.P.students.find(x => x.name === 'Lena Live').id); await flush();
   assert.doesNotMatch(t2.html, /Welcome documents/);
+});
+
+test('records: a provider with no clinical notes gets one plain row, not a section that opens to the same sentence', async () => {
+  const t = boot({ search: '?fixtures=1', preloadFixtures: true }); await flush();
+  const p = t.app.S.P.providers.find(x => x.name === 'Jamie Fern'); await t.go('#/notes'); await flush(); await t.go('#/provider/' + p.key); await flush();
+  const row = t.html.split('data-section="Clinical data"')[0].split('<').pop() + t.html.split('data-section="Clinical data"')[1].split('</div>')[0];
+  assert.match(t.html, /record-section empty" data-section="Clinical data"/); assert.match(row, /No clinical notes for this provider yet\./);
+  assert.doesNotMatch(t.html, /No clinical notes connected for this record/);
 });
 
 for (const [name, fn] of tests) {
