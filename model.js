@@ -37,12 +37,23 @@
     // service_cases is an optional structured source; the current API only exposes a case record ID.
     // Never group records by student name, and never turn assignments into invented authorizations.
     var records = Array.isArray(c.service_cases) && c.service_cases.length ? c.service_cases : [
-      { record_id: c.id, service: (c.assignments || []).map(function (a) { return val(a.role); }).filter(Boolean).join(' · '), auth_end: (c.bank || {}).expiry, source: 'Case Board / roster record. Rates and full authorization details are not connected.' }
+      { record_id: c.id, service: '', auth_end: (c.bank || {}).expiry,
+        bank_total: (c.bank || {}).total, bank_used: (c.bank || {}).used, bank_pct: (c.bank || {}).pct,
+        // Per-service mandate and authorization end exactly as the Provider Hub assignments state them (real live fields).
+        services: (c.assignments || []).filter(function (a) { return !/^(parent|guardian)$/i.test(str(a.role)) && !GONE.test(str(a.status)); }).map(function (a) {
+          var open = /^(tbd|open|unassigned|vacant|none|n\/a|\?)$/i.test(str(a.provider));
+          return { service: val(a.role), provider: open ? '' : val(a.provider), open: open, mandate: val(a.mandate), authEnd: val(a.auth_expiry), status: val(a.status) };
+        }),
+        source: 'Case Board / roster record. Rates and full authorization details are not connected.' }
     ];
+    function num(v) { return v == null || v === '' || isNaN(+v) ? '' : String(+v); }
     return records.map(function (r) { return {
       recordId: val(r.record_id), service: val(r.service), status: val(r.status), provider: val(r.provider),
       authStart: val(r.auth_start), authEnd: val(r.auth_end), hours: val(r.authorized_hours), units: val(r.authorized_units),
-      frequency: val(r.frequency), rate: val(r.rate), funding: val(r.funding_source), source: val(r.source)
+      frequency: val(r.frequency), rate: val(r.rate), funding: val(r.funding_source), source: val(r.source),
+      // Hour bank from the roster (real live fields): total, used and percent left exactly as the API sends them; never computed here.
+      services: Array.isArray(r.services) ? r.services : [],
+      bankTotal: num(r.bank_total), bankUsed: num(r.bank_used), bankLeft: num(r.bank_pct) ? num(r.bank_pct) + '%' : ''
     }; });
   }
 
@@ -80,6 +91,9 @@
       if (!ex) { ex = { case_id: c.id, student: c.student, role: role, schedule: '', mandate: '', status: '', setting: '', source: source }; p.cases.push(ex); }
       Object.keys(extra || {}).forEach(function (k) { if (extra[k] && !ex[k]) ex[k] = extra[k]; });
     }
+    var byCase = {}, caseIdCount = {};
+    (cases || []).forEach(function (c) { caseIdCount[c.id] = (caseIdCount[c.id] || 0) + 1; byCase[c.id] = c; });
+    Object.keys(caseIdCount).forEach(function (id) { if (caseIdCount[id] > 1) delete byCase[id]; });   // a duplicated id is ambiguous: link nothing
     (cases || []).forEach(function (c) {
       (c.team || []).forEach(function (m) {
         if (/^(parent|guardian|related service)$/i.test(m.role)) return;
@@ -99,6 +113,10 @@
       if (!p.phone && cp.phone) p.phone = cp.phone; if (!p.email && cp.email) p.email = cp.email;
       if (cp.discipline && p.roles.indexOf(cp.discipline) < 0) p.roles.push(cp.discipline);
       if (p.sources.indexOf('Student chart') < 0) p.sources.push('Student chart');
+      // The API names the exact cases this chart provider serves (case_ids). Link only those ids; never match by student name.
+      (Array.isArray(cp.case_ids) ? cp.case_ids : []).forEach(function (id) {
+        var c = byCase[str(id)]; if (c) link(p, c, val(cp.discipline), {}, 'Student chart');
+      });
     });
     list.sort(byStr('name'));
     return list;
@@ -139,10 +157,10 @@
       var direct = team.filter(function (m) { return !/^(parent|guardian|related service|bcba)$/i.test(m.role); });
       var asg = (c.assignments || []).filter(function (a) { return !/^(parent|guardian)$/i.test(str(a.role)); }).map(function (a) { return { provider: str(a.provider), provider_id: str(a.provider_id), role: str(a.role), setting: val(a.setting), schedule: val(a.schedule), mandate: val(a.mandate), auth_expiry: val(a.auth_expiry), status: val(a.status), notes: val(a.notes), open: /^(tbd|open|unassigned|vacant|none|n\/a|\?)$/i.test(str(a.provider)) }; });
       var fields = EDITABLE.filter(function (k) { return k in f; }).map(function (k) { return { k: k, v: val(f[k]) }; });
-      var intake = c.intake ? { status: val(c.intake.status), received: val(c.intake.received), missing: val(c.intake.missing), last: val(c.intake.last), who: val(c.intake.who),
+      var intake = c.intake ? { status: val(c.intake.status), received: val(c.intake.received), missing: val(c.intake.missing), last: val(c.intake.last), who: val(c.intake.who), welcome: /^not found in email$/i.test(str(c.intake.welcome)) ? '' : val(c.intake.welcome),
         links: (c.intake.links || []).map(safeUrl).filter(Boolean) } : null;
       var ensora = c.ensora ? { use: val(c.ensora.use), data: val(c.ensora.data), last: val(c.ensora.last), source: val(c.ensora.source), sourceUrl: safeUrl(c.ensora.source), missing: val(c.ensora.missing) } : null;
-      var chart = c.chart ? { dob: val(c.chart.dob), age: c.chart.age, school: val(c.chart.school), attends: val(c.chart.attends_school), location: val(c.chart.service_location),
+      var chart = c.chart ? { dob: val(c.chart.dob), age: c.chart.age != null && c.chart.age !== '' ? c.chart.age : val(c.chart.age_text), school: val(c.chart.school), attends: val(c.chart.attends_school), location: val(c.chart.service_location),
         schedule: val(c.chart.schedule), hours: val(c.chart.hours_week), address: val(c.chart.guardian_address), osis: val(c.chart.osis || c.osis), district: val(c.chart.district || c.district), provider: c.chart.provider ? { name: val(c.chart.provider.name), provider_id: val(c.chart.provider.provider_id) } : null } : null;
       return {
         id: str(c.id), name: str(c.student) || str(c.id), source: c.source === 'board' ? 'Case Board' : 'Case roster', setting: val(c.setting),
@@ -163,7 +181,7 @@
     var ambiguous = students.filter(function (s) { return s.duplicateId || s.sameNameIds.length; });
     var schedules = [];
     students.forEach(function (s) {
-      s.assignments.forEach(function (a) { if (!GONE.test(a.status)) schedules.push({ case_id: s.id, student: s.name, provider: a.open ? '' : a.provider, providerKey: a.open ? '' : ((findProvider(providers, a.provider) || {}).key || ''), role: a.role, schedule: a.schedule, mandate: a.mandate, status: a.status, open: a.open, source: 'Provider Hub assignments' }); });
+      s.assignments.forEach(function (a) { if (!GONE.test(a.status)) schedules.push({ case_id: s.id, student: s.name, provider: a.open ? '' : a.provider, providerKey: a.open ? '' : ((findProvider(providers, a.provider) || {}).key || ''), role: a.role, schedule: a.schedule, mandate: a.mandate, status: a.status, open: a.open, notes: a.notes, source: 'Provider Hub assignments' }); });
     });
     var gaps = (b.unstaffed || []).map(function (g) { return { case_id: str(g.case_id), student: str(g.student), role: str(g.role), since: str(g.since), days: g.days, departed: str(g.departed) }; });
     students.forEach(function (s) { s.openRoles.forEach(function (r) { if (!gaps.some(function (g) { return g.case_id === s.id && g.role.toLowerCase() === r.toLowerCase(); })) gaps.push({ case_id: s.id, student: s.name, role: r, since: '', days: null, departed: '' }); }); });
@@ -343,7 +361,7 @@
   function weekPlanRaw(rows) {
     return rows.map(function (r) {
       var ps = parseSchedule(r.schedule), mins = slotMinutes(ps.slots), man = mandateMinutes(r.mandate);
-      return { case_id: r.case_id, student: r.student, provider: r.provider, providerKey: r.providerKey, role: r.role, open: r.open, schedule: r.schedule,
+      return { case_id: r.case_id, student: r.student, provider: r.provider, providerKey: r.providerKey, role: r.role, open: r.open, schedule: r.schedule, notes: r.notes || '',
         slots: ps.slots, unparsed: ps.unparsed, minutes: mins, mandateMin: man,
         vsMandate: man == null || !ps.slots.length || ps.unparsed.length ? '' : mins < man - 5 ? 'under' : mins > man + 5 ? 'over' : 'match' };
     });

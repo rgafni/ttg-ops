@@ -14,3 +14,5 @@
 - 2026-11-15 TTG Ops is for Roni only, not BCBAs. One owner key, checked by the API on every call; no BCBA or staff access. "By BCBA" stays only as a sort of his own student list. (Roni, t3075u)
 - 2026-11-15 No case numbers anywhere on screen (main app and showcase). The data is untouched; case numbers are for the billing staff who submit to the state. (Roni, t3075u)
 - 2026-11-15 The 371 notes not linked to a student stay as they are for now. (Roni, t3075u)
+- 2026-11-22 Real roster and chart fields the API already sends now show where they belong: hour bank total, used and percent left in Cases; chart age written as text when there is no date of birth; intake welcome documents; and chart providers linked only to the exact cases the API names (never by name, never when an id is duplicated). (review follow-up)
+- 2026-11-22 Cases lists each service with its weekly mandate and authorization end exactly as the Provider Hub assignments state them; the repeated service line is gone. Assignment notes show under that service in Schedule. (review follow-up)

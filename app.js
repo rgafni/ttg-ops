@@ -280,10 +280,15 @@
     var cases = s.caseRecords.map(function (r) {
       return recordItem('<h3>' + 'Case record' + '</h3>' + presentKV([
         ['Record ID', r.recordId], ['Service / discipline', r.service], ['Status', r.status], ['Assigned provider', r.provider], ['Authorization starts', r.authStart], ['Authorization ends', r.authEnd],
-        ['Authorized hours', r.hours], ['Authorized units', r.units], ['Frequency', r.frequency], ['Rate', r.rate], ['Funding source', r.funding]]) + (r.source ? '<p class="src">' + esc(r.source) + '</p>' : ''));
+        ['Authorized hours', r.hours], ['Authorized units', r.units], ['Frequency', r.frequency], ['Rate', r.rate], ['Funding source', r.funding],
+        ['Hour bank total', r.bankTotal], ['Hours used', r.bankUsed], ['Hour bank left', r.bankLeft]]) +
+        (r.services.length ? '<p class="muted" style="margin-top:8px">By service</p>' + r.services.map(function (v) {
+          return '<div class="svc-line"><b>' + esc(v.service || 'Service') + '</b> · ' + (v.open ? pill('Unstaffed', 'warn') : esc(v.provider || 'No provider named')) +
+            '<div class="muted">' + esc([v.mandate ? 'mandate ' + v.mandate + ' h/week' : 'no mandate on file', v.authEnd ? 'authorization ends ' + v.authEnd : 'no authorization end on file'].join(' · ')) + '</div></div>';
+        }).join('') : '') + (r.source ? '<p class="src">' + esc(r.source) + '</p>' : ''));
     }).join('');
-    var auth = s.caseRecords.map(function (r) { return r.authEnd; }).filter(Boolean)[0];
-    h += recordSection('Cases', cases + caseEditor(s), 'No case records connected.', plural(s.caseRecords.length, 'case record') + (auth ? ' · authorization ends ' + auth : ''));
+    var auth = s.caseRecords.map(function (r) { return r.authEnd; }).filter(Boolean)[0], left = s.caseRecords.map(function (r) { return r.bankLeft; }).filter(Boolean)[0];
+    h += recordSection('Cases', cases + caseEditor(s), 'No case records connected.', plural(s.caseRecords.length, 'case record') + (auth ? ' · authorization ends ' + auth : '') + (left ? ' · hour bank ' + left + ' left' : ''));
     var team = S.P.providers.filter(function (p) { return p.cases.some(function (x) { return x.case_id === s.id; }); }).map(function (p) {
       var roles = p.cases.filter(function (x) { return x.case_id === s.id; }).map(function (x) { return x.role; }).filter(Boolean);
       return recordItem('<a href="#/provider/' + esc(p.key) + '">' + esc(p.name) + '</a>' + presentKV([['Discipline', roles.join(' · ')], ['Phone', p.phone], ['Email', p.email]]));
@@ -297,7 +302,7 @@
     var schedule = (plan.some(function (a) { return a.slots.length; }) ? miniWeek(plan) : '') + plan.map(function (a) {
       var vs = a.vsMandate === 'under' || a.vsMandate === 'over' ? pill('Scheduled ' + M.fmtHours(a.minutes) + ', mandate ' + M.fmtHours(a.mandateMin), 'warn') : '';
       return recordItem('<b>' + esc(a.role || 'Service') + '</b> · ' + (a.open ? pill('Unstaffed', 'warn') : a.providerKey ? '<a href="#/provider/' + esc(a.providerKey) + '">' + esc(a.provider) + '</a>' : esc(a.provider)) +
-        '<div class="muted">' + esc(a.schedule || 'No schedule on file') + (a.mandateMin != null ? ' · mandate ' + esc(M.fmtHours(a.mandateMin)) + '/week' : '') + '</div>' + (vs ? '<div class="ev-flags">' + vs + '</div>' : ''));
+        '<div class="muted">' + esc(a.schedule || 'No schedule on file') + (a.mandateMin != null ? ' · mandate ' + esc(M.fmtHours(a.mandateMin)) + '/week' : '') + '</div>' + (a.notes ? '<div class="muted">Note: ' + esc(a.notes) + '</div>' : '') + (vs ? '<div class="ev-flags">' + vs + '</div>' : ''));
     }).join('');
     // Chart schedule has its own provenance; it is not evidence of delivered sessions.
     if (c.schedule && !plan.some(function (a) { return a.schedule === c.schedule; })) schedule += presentKV([['Chart schedule', c.schedule], ['Chart hours / week', c.hours]]);
@@ -306,7 +311,7 @@
     var bm = function (l) { return l.case_id === s.id && l.case_status === 'matched'; };
     h += recordSection('Billing', recordBilling(bm), 'No billing lines for this child.', billingSummary(bm));
     var it = s.intake, en = s.ensora, docs = docLinks(s.documents);
-    if (it) docs += presentKV([['Intake status', it.status], ['Received', it.received], ['Missing documents', it.missing]]) + it.links.map(function (u, i) { return '<p>' + ext(u, 'Document folder ' + (i + 1)) + '</p>'; }).join('');
+    if (it) docs += presentKV([['Intake status', it.status], ['Received', it.received], ['Missing documents', it.missing], ['Welcome documents', it.welcome]]) + it.links.map(function (u, i) { return '<p>' + ext(u, 'Document folder ' + (i + 1)) + '</p>'; }).join('');
     if (en) docs += presentKV([['Ensora records', en.data], ['Last capture', en.last], ['Missing records', en.missing]]) + (en.sourceUrl ? '<p>' + ext(en.sourceUrl, 'Ensora source') + '</p>' : '');
     S.P.reports.filter(function (r) { return r.scope === s.name; }).forEach(function (r) { docs += recordItem('<a href="#/report/' + encodeURIComponent(r.id) + '">' + esc(r.title) + '</a> ' + pill(r.status, r.status === 'draft' ? 'warn' : '')); });
     var nRep = S.P.reports.filter(function (r) { return r.scope === s.name; }).length;
@@ -495,7 +500,8 @@
     S.P.reports.filter(function (r) { return r.kind === 'provider' && r.scope === p.name; }).forEach(function (r) { docs += recordItem('<a href="#/report/' + encodeURIComponent(r.id) + '">' + esc(r.title) + '</a>'); });
     h += recordSection('Documents', docs, 'No provider documents connected.', docs ? plural((docs.match(/class="record-item"/g) || []).length, 'item') : '');
     var notes = S.clinical && S.clinical.available ? S.clinical.notes.filter(function (x) { return x.providerKey === p.key; }) : [];
-    h += recordSection('Clinical data', clinicalSummary(notes, '#/notes', ' data-act="notes-by-provider" data-key="' + esc(p.key) + '"'), 'No clinical notes for this provider.', notes.length ? plural(notes.length, 'note') : S.clinical && S.clinical.available ? 'No notes yet' : '');
+    var noNotes = !notes.length && S.clinical && S.clinical.available && !S.loading.clinical;   // nothing to open: plain row, said once
+    h += recordSection('Clinical data', noNotes ? '' : clinicalSummary(notes, '#/notes', ' data-act="notes-by-provider" data-key="' + esc(p.key) + '"'), 'No clinical notes for this provider yet.', notes.length ? plural(notes.length, 'note') : '');
     return h;
   };
 
